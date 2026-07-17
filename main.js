@@ -400,6 +400,26 @@
       }
     }
   }
+  const ingredientButtons = new Map();
+  let ingredientMenuSignature = '';
+
+  function rebuildIngredientDropdown(ingredients) {
+    ingredientOptions.innerHTML = '';
+    ingredientButtons.clear();
+    for (const ing of ingredients) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = ing.name;
+      button.addEventListener('click', () => {
+        prepClickIngredient(ing);
+        ingredientOptions.classList.add('hidden');
+        ingredientToggle.setAttribute('aria-expanded', 'false');
+      });
+      ingredientButtons.set(ing.id, button);
+      ingredientOptions.appendChild(button);
+    }
+  }
+
   function syncIngredientDropdown() {
     const atPrep = started && !paused && !shift.showingReport && inStationRange(state.player, prep());
     ingredientDropdown.classList.toggle('available', atPrep);
@@ -407,19 +427,21 @@
       ingredientOptions.classList.add('hidden');
       ingredientToggle.setAttribute('aria-expanded', 'false');
     }
-    ingredientOptions.innerHTML = '';
-    for (const ing of availableIngredients()) {
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.textContent = ing.name;
-      const enabled = ing.isBase ? firstFreeHand() >= 0 : state.player.pizzas.some((pizza) => canAddIngredient(pizza, ing));
+
+    const ingredients = availableIngredients();
+    const signature = ingredients.map((ingredient) => ingredient.id).join('|');
+    if (signature !== ingredientMenuSignature) {
+      ingredientMenuSignature = signature;
+      rebuildIngredientDropdown(ingredients);
+    }
+
+    for (const ing of ingredients) {
+      const button = ingredientButtons.get(ing.id);
+      if (!button) continue;
+      const enabled = ing.isBase
+        ? firstFreeHand() >= 0
+        : state.player.pizzas.some((pizza) => canAddIngredient(pizza, ing));
       button.disabled = !enabled || !!state.player.action;
-      button.addEventListener('click', () => {
-        prepClickIngredient(ing);
-        ingredientOptions.classList.add('hidden');
-        ingredientToggle.setAttribute('aria-expanded', 'false');
-      });
-      ingredientOptions.appendChild(button);
     }
   }
   function toggleIngredientDropdown() {
