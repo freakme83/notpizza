@@ -430,3 +430,20 @@ canvas#game {
   font-size: 0.75rem;
   text-align: left;
 }
+
+
+.drink-dropdown {
+  left: 230px;
+}
+
+#hireMenu button[data-type='drinks'] {
+  background: #397d91;
+}
+
+#hireMenu button[data-type='drinks']:hover {
+  background: #4697ad;
+}
+
+#sodaUpgrade.purchased {
+  border-color: #7cb342;
+}
