@@ -28,6 +28,11 @@
         <div id="pauseRecipes" class="pause-recipes"></div>
       </div>
 
+      <div id="drinkDropdown" class="ingredient-dropdown drink-dropdown hidden" aria-label="Choose drink">
+        <button id="drinkToggle" type="button" aria-expanded="false">Drinks ▾</button>
+        <div id="drinkOptions" class="ingredient-options hidden"></div>
+      </div>
+
       <div id="ingredientDropdown" class="ingredient-dropdown hidden" aria-label="Choose ingredient">
         <button id="ingredientToggle" type="button" aria-expanded="false">Ingredients ▾</button>
         <div id="ingredientOptions" class="ingredient-options hidden"></div>
@@ -42,6 +47,7 @@
           <div class="report-options">
             <button id="doughUpgrade" class="option-card" type="button"><strong>Faster dough · Level 2</strong><span>20% faster kneading · $50</span></button>
             <button id="ovenUpgrade" class="option-card" type="button"><strong>Faster oven · Level 2</strong><span>20% faster baking · $70</span></button>
+            <button id="sodaUpgrade" class="option-card" type="button"><strong>Soda cabinet</strong><span>Permanent drinks service · $150</span></button>
           </div>
           <h3>Menu for the next shift</h3>
           <p class="report-note">Unlock recipes permanently for $60 each. Customers choose randomly from your unlocked menu.</p>
@@ -59,6 +65,7 @@
           <button data-type="normal" role="menuitem">Waiter · $25</button>
           <button data-type="fast" role="menuitem">Fast waiter · $35</button>
           <button data-type="chef" role="menuitem">Chef · $100</button>
+          <button data-type="drinks" role="menuitem">Drinks runner · $30</button>
         </div>
         <button id="hireBtn" aria-haspopup="true">Hire waiter ▾</button>
       </div>
@@ -69,6 +76,6 @@
         <span>click to start</span>
       </div>
     </div>
-    <script src="main.js?v=phase8"></script>
+    <script src="main.js?v=phase9"></script>
   </body>
 </html>
