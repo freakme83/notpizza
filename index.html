@@ -27,6 +27,27 @@
         <span>Press P or Escape to continue</span>
       </div>
 
+      <section id="shiftReport" class="hidden" aria-labelledby="reportTitle">
+        <div class="report-card">
+          <p class="eyebrow">SHIFT COMPLETE</p>
+          <h2 id="reportTitle">Day 1 report</h2>
+          <div id="reportStats" class="report-stats"></div>
+          <h3>Permanent upgrades</h3>
+          <div class="report-options">
+            <button id="doughUpgrade" class="option-card" type="button"><strong>Faster dough · Level 2</strong><span>20% faster kneading · $50</span></button>
+            <button id="ovenUpgrade" class="option-card" type="button"><strong>Faster oven · Level 2</strong><span>20% faster baking · $70</span></button>
+          </div>
+          <h3>Menu for the next shift</h3>
+          <p class="report-note">Choose any unlocked recipe. You may unlock one new recipe after each shift.</p>
+          <div class="report-options recipe-options">
+            <button class="option-card recipe-choice" data-recipe="margherita" type="button">Margherita</button>
+            <button class="option-card recipe-choice" data-recipe="pepperoni" type="button">Unlock Pepperoni</button>
+            <button class="option-card recipe-choice" data-recipe="funghi" type="button">Unlock Funghi</button>
+          </div>
+          <button id="nextShiftBtn" class="primary-action" type="button">Start day 2</button>
+        </div>
+      </section>
+
       <div id="hireWrap" class="hidden">
         <div id="hireMenu" class="hidden" role="menu">
           <button data-type="normal" role="menuitem">Waiter · $25</button>
@@ -42,6 +63,6 @@
         <span>click to start</span>
       </div>
     </div>
-    <script src="main.js?v=phase6"></script>
+    <script src="main.js?v=phase7"></script>
   </body>
 </html>

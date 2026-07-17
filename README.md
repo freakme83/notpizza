@@ -48,3 +48,23 @@ When changing game balance, the main values are near the top of `main.js`, inclu
 This is an early playable prototype. The core cooking, serving, staffing, customer-patience, takeaway, and cleanup loops are implemented.
 
 Possible next steps include additional recipes, upgrades, shift objectives, mobile controls, saved progress, and automated tests.
+
+
+## Shifts and progression
+
+Each day is a five-minute shift:
+
+- opening runs at a relaxed pace
+- the lunch rush increases customer frequency
+- last call creates a final short wave
+- orders close at 4:30, leaving 30 seconds to finish service
+- the report appears after five minutes once all remaining customers have left
+
+The end-of-day report shows customers served and lost, revenue, staff costs, net shift result, and average waiting time.
+
+Permanent Level 2 upgrades are available from the report:
+
+- Faster dough: $50, reducing kneading time by 20%
+- Faster oven: $70, reducing baking time by 20%
+
+Margherita is available from the beginning. After each shift, one new recipe can be unlocked for free and selected for the next day. Pepperoni and Funghi are currently available as unlocks. Each new day increases customer pressure slightly.
