@@ -16,11 +16,15 @@
   const ingredientDropdown = document.getElementById('ingredientDropdown');
   const ingredientToggle = document.getElementById('ingredientToggle');
   const ingredientOptions = document.getElementById('ingredientOptions');
+  const drinkDropdown = document.getElementById('drinkDropdown');
+  const drinkToggle = document.getElementById('drinkToggle');
+  const drinkOptions = document.getElementById('drinkOptions');
   const shiftReport = document.getElementById('shiftReport');
   const reportTitle = document.getElementById('reportTitle');
   const reportStats = document.getElementById('reportStats');
   const doughUpgradeBtn = document.getElementById('doughUpgrade');
   const ovenUpgradeBtn = document.getElementById('ovenUpgrade');
+  const sodaUpgradeBtn = document.getElementById('sodaUpgrade');
   const nextShiftBtn = document.getElementById('nextShiftBtn');
   const recipeButtons = [...document.querySelectorAll('.recipe-choice')];
   const W = 960, H = 620;
@@ -67,8 +71,13 @@
   ];
   const ING_MAP = Object.fromEntries(INGREDIENTS.map((i) => [i.id, i]));
   const ING_ICON_Y = 126;
-  const WAITER_COST = 25, FAST_WAITER_COST = 35, WAITER_DURATION = 300;
-  const CHEF_COST = 100, CHEF_DURATION = 300;
+  const WAITER_COST = 25, FAST_WAITER_COST = 35, DRINKS_WAITER_COST = 30, WAITER_DURATION = 300;
+  const CHEF_COST = 100, CHEF_DURATION = 300, HOST_COST = 40;
+  const DRINKS = {
+    coke: { name: 'Coke', price: 2, color: '#c0392b' },
+    water: { name: 'Water', price: 1, color: '#70b7d8' },
+    dew: { name: 'Dew', price: 2, color: '#77b83f' },
+  };
 
   // trash bin next to oven (just right of the oven counter)
   const BIN = { x: 836, y: 252, r: 20 };
@@ -87,6 +96,7 @@
   });
 
   const PICKUP = { x: 30, y: 463, w: 100, h: 34, use: { x: 80, y: 565 } };
+  const SODA = { x: 886, y: 178, w: 58, h: 72, use: { x: 864, y: 268 } };
   const TAKEAWAY_SPOTS = [
     { x: 80, y: 545, occupied: false, cust: null },
     { x: 80, y: 585, occupied: false, cust: null },
@@ -97,20 +107,21 @@
   let waiterSeq = 0, chefSeq = 0;
   const state = {
     cash: 0, served: 0,
-    player: { x: 480, y: 500, r: 15, speed: 195, pizzas: [null, null], trash: null, action: null, dir: 1, walk: 0 },
+    player: { x: 480, y: 500, r: 15, speed: 195, pizzas: [null, null], drink: null, trash: null, action: null, dir: 1, walk: 0 },
     customers: [], waiters: [], chefs: [], trash: [],
     spawnTimer: 3.5, time: 0,
   };
   const progress = {
-    doughLevel: 1, ovenLevel: 1,
+    doughLevel: 1, ovenLevel: 1, sodaCabinet: false,
     unlockedRecipes: new Set(['margherita']),
   };
   const shift = {
     day: 1, elapsed: 0, orderCloseAt: 270, duration: 300,
     phase: 'open', showingReport: false, recipeUnlockUsed: false, stats: null,
   };
-  const freshShiftStats = () => ({ revenue: 0, staffCosts: 0, served: 0, lost: 0, totalWait: 0, dineIn: 0, takeaway: 0 });
+  const freshShiftStats = () => ({ revenue: 0, tips: 0, wasteCosts: 0, staffCosts: 0, served: 0, lost: 0, totalWait: 0, dineIn: 0, takeaway: 0 });
   shift.stats = freshShiftStats();
+  let hostActive = false;
   const unlockedRecipeIds = () => [...progress.unlockedRecipes];
   const availableIngredients = () => {
     const ids = new Set(unlockedRecipeIds().flatMap((id) => RECIPES[id].ingredients));
@@ -213,6 +224,7 @@
   const hasFreeHand = (w) => w.hands.findIndex((h) => !h);
   const carriedPizzaHand = (w) => w.hands.findIndex((h) => h && h.t === 'pizza');
   const carriedTrashHand = (w) => w.hands.findIndex((h) => h && h.t === 'trash');
+  const carriedDrinkHand = (w) => w.hands.findIndex((h) => h && h.t === 'drink');
 
   /* ---------- interaction range ---------- */
   function inStationRange(p, s) {
@@ -220,6 +232,7 @@
     return p.x > s.cx - half && p.x < s.cx + half && p.y > 158 && p.y < 262;
   }
   const inBinRange = (p) => dist(p.x, p.y, BIN.x, BIN.y) < 58;
+  const inSodaRange = (p) => progress.sodaCabinet && dist(p.x, p.y, SODA.use.x, SODA.use.y) < 72;
   const DELIVER_RADIUS = 72;
 
   /* ---------- requirements (player) ---------- */
@@ -252,7 +265,7 @@
     const readyHand = firstCarriedReady();
     const freeOven = ov.slots.findIndex((s) => !s.pizza);
     if (readyHand >= 0 && freeOven >= 0) return { ok: true, action: 'Bake', mode: 'place', oSlot: freeOven, hSlot: readyHand };
-    const bakedOven = ov.slots.findIndex((s) => s.pizza && s.done && s.claimedBy === null);
+    const bakedOven = ov.slots.findIndex((s) => s.pizza && s.done);
     const freeHand = firstFreeHand();
     if (bakedOven >= 0 && freeHand >= 0) return { ok: true, action: 'Collect', mode: 'collect', oSlot: bakedOven, hSlot: freeHand };
     if (readyHand >= 0) return { ok: false, hint: 'oven full' };
@@ -261,15 +274,54 @@
     return { ok: false, hint: 'need cheese' };
   }
 
-  function nearestWaiting(x, y, range, recipeId = null) {
+  function nearestWaiting(x, y, range, recipeId = null, allowClaimed = false) {
     let best = null, bd = range;
     for (const c of state.customers) {
-      if (c.state !== 'waiting' || c.claimedBy !== null || (recipeId && c.recipeId !== recipeId)) continue;
+      if (c.state !== 'waiting' || (!allowClaimed && c.claimedBy !== null) || (recipeId && c.recipeId !== recipeId)) continue;
       const d = dist(x, y, c.x, c.y);
       if (d < bd) { bd = d; best = c; }
     }
     return best;
   }
+  function nearestDrinkCustomer(x, y, range, drinkId = null, ownerId = null, allowClaimed = false) {
+    let best = null, bd = range;
+    for (const c of state.customers) {
+      const canReceive = c.state === 'waiting' || c.state === 'eating';
+      const claimAvailable = allowClaimed || c.drinkClaimedBy === null || c.drinkClaimedBy === ownerId;
+      if (!canReceive || !c.drinkId || c.drinkDelivered || !claimAvailable || (drinkId && c.drinkId !== drinkId)) continue;
+      const d = dist(x, y, c.x, c.y);
+      if (d < bd) { bd = d; best = c; }
+    }
+    return best;
+  }
+  function mostUrgentDrinkCustomer(drinkId = null, ownerId = null) {
+    return nearestDrinkCustomer(480, 360, 1e9, drinkId, ownerId);
+  }
+  function deliverDrink(c, carrier, ownerId = null) {
+    if (!c || !c.drinkId || c.drinkDelivered || (c.state !== 'waiting' && c.state !== 'eating')) return false;
+    if (!carrier || carrier.id !== c.drinkId) return false;
+    if (ownerId === null) releaseWaiterAssignment(c.drinkClaimedBy, c, 'drink');
+    recordFirstService(c);
+    c.drinkDelivered = true;
+    c.drinkClaimedBy = null;
+    SND.done();
+    return true;
+  }
+
+  function releaseWaiterAssignment(waiterId, customer, kind) {
+    if (waiterId === null || waiterId === undefined) return;
+    const waiter = state.waiters.find((candidate) => candidate.id === waiterId);
+    if (!waiter) return;
+    if (kind === 'pizza') {
+      if (waiter.targetCust === customer) waiter.targetCust = null;
+      customer.claimedBy = null;
+    } else {
+      if (waiter.targetDrinkCust === customer) waiter.targetDrinkCust = null;
+      customer.drinkClaimedBy = null;
+    }
+    if (waiter.state !== 'leave') waiter.state = 'seek';
+  }
+
   function nearestTrash(x, y, range) {
     let best = null, bd = range;
     for (const t of state.trash) {
@@ -303,11 +355,24 @@
     for (let hand = 0; hand < p.pizzas.length; hand++) {
       const pizza = p.pizzas[hand];
       if (!pizza || !pizza.baked) continue;
-      const c = nearestWaiting(p.x, p.y, DELIVER_RADIUS, pizzaRecipeId(pizza));
+      const c = nearestWaiting(p.x, p.y, DELIVER_RADIUS, pizzaRecipeId(pizza), true);
       if (c) return { kind: 'deliver', ok: true, text: 'E: Deliver ' + RECIPES[c.recipeId].name, target: c, hand };
     }
-    if (p.trash && inBinRange(p)) return { kind: 'toss', ok: true, text: 'E: Toss trash' };
+    if (p.drink) {
+      const drinkCustomer = nearestDrinkCustomer(p.x, p.y, DELIVER_RADIUS, p.drink.id, null, true);
+      if (drinkCustomer) return { kind: 'deliver-drink', ok: true, text: 'E: Deliver ' + DRINKS[p.drink.id].name, target: drinkCustomer };
+    }
+    if (inBinRange(p) && (p.trash || p.drink || p.pizzas.some(Boolean))) {
+      const item = p.trash ? 'trash' : p.drink ? 'drink' : 'pizza';
+      const loss = item === 'drink' ? 1 : item === 'pizza' ? 3 : 0;
+      return { kind: 'discard-held', ok: true, text: 'E: Discard ' + item + (loss ? ' (-$' + loss + ')' : ''), item };
+    }
     if (!p.trash) { const t = nearestTrash(p.x, p.y, 56); if (t) return { kind: 'pickup', ok: true, text: 'E: Pick up trash', target: t }; }
+    if (inSodaRange(p)) {
+      return p.drink
+        ? { kind: 'drink-menu', ok: false, text: 'Already carrying ' + DRINKS[p.drink.id].name }
+        : { kind: 'drink-menu', ok: true, text: 'E: Choose drink' };
+    }
     const ov = oven();
     if (inStationRange(p, ov)) {
       const r = ovenRequirement(p.pizzas, ov);
@@ -327,9 +392,13 @@
     else if (p.pizzas[c.slot]) p.pizzas[c.slot].added.add(c.add);
     SND.done();
   }
-  function takeReadyOvenSlot(slotIndex, ownerId) {
+  function takeReadyOvenSlot(slotIndex, ownerId, force = false) {
     const s = oven().slots[slotIndex];
-    if (!s || !s.pizza || !s.done || (s.claimedBy !== null && s.claimedBy !== ownerId)) return null;
+    if (!s || !s.pizza || !s.done || (!force && s.claimedBy !== null && s.claimedBy !== ownerId)) return null;
+    if (force && s.claimedBy !== null) {
+      const waiter = state.waiters.find((candidate) => candidate.id === s.claimedBy);
+      if (waiter && waiter.state !== 'leave') { waiter.targetSlot = -1; waiter.state = 'seek'; }
+    }
     const pz = s.pizza;
     s.pizza = null; s.baking = false; s.done = false; s.timer = 0; s.claimedBy = null;
     return pz;
@@ -341,19 +410,31 @@
       s.pizza = p.pizzas[c.hSlot]; s.pizza.recipeId = recipeForPizza(s.pizza); s.baking = true; s.done = false; s.timer = 0; s.claimedBy = null;
       p.pizzas[c.hSlot] = null; SND.step();
     } else {
-      const pz = takeReadyOvenSlot(c.oSlot);
+      const pz = takeReadyOvenSlot(c.oSlot, null, true);
       if (pz) { p.pizzas[c.hSlot] = pz; SND.done(); }
     }
   }
   // customer served → eats (dine-in) or pays now (takeaway). cash is added on pay completion.
+  function recordFirstService(c) {
+    if (c.firstServiceAt !== null) return;
+    c.firstServiceAt = c.serviceElapsed;
+    c.tipEligible = c.firstServiceAt <= 15;
+    c.mood = c.patience / c.maxPatience > 0.4 ? 'happy' : 'neutral';
+  }
+
   function serveCustomer(c) {
-    if (c.takeaway) { c.state = 'paying'; c.payTimer = 1.3; }
+    recordFirstService(c);
+    if (c.takeaway) {
+      if (!c.drinkDelivered) { c.drinkId = null; c.drinkClaimedBy = null; }
+      c.state = 'paying'; c.payTimer = 1.3;
+    }
     else { c.state = 'eating'; c.eatTimer = 3; }
   }
   function deliver(c, handIndex) {
     const p = state.player;
     const idx = Number.isInteger(handIndex) ? handIndex : firstCarriedBaked(c.recipeId);
     if (idx < 0 || c.state !== 'waiting' || pizzaRecipeId(p.pizzas[idx]) !== c.recipeId) return;
+    releaseWaiterAssignment(c.claimedBy, c, 'pizza');
     p.pizzas[idx] = null;
     serveCustomer(c); SND.done();
   }
@@ -380,7 +461,20 @@
     if (c.kind === 'prep-menu') toggleIngredientDropdown();
     else if (c.kind === 'oven') ovenInteract(c);
     else if (c.kind === 'deliver') deliver(c.target, c.hand);
-    else if (c.kind === 'toss') { p.trash = null; SND.bin(); }
+    else if (c.kind === 'deliver-drink') {
+      if (deliverDrink(c.target, p.drink)) p.drink = null;
+    }
+    else if (c.kind === 'drink-menu') toggleDrinkDropdown();
+    else if (c.kind === 'discard-held') {
+      if (c.item === 'trash') p.trash = null;
+      else if (c.item === 'drink') { p.drink = null; state.cash -= 1; shift.stats.wasteCosts += 1; }
+      else {
+        const slot = p.pizzas.findIndex(Boolean);
+        if (slot >= 0) p.pizzas[slot] = null;
+        state.cash -= 3; shift.stats.wasteCosts += 3;
+      }
+      SND.bin();
+    }
     else if (c.kind === 'pickup') { if (c.target) { p.trash = { t: 'trash' }; const i = state.trash.indexOf(c.target); if (i >= 0) state.trash.splice(i, 1); SND.done(); } }
   }
   function prepClickIngredient(ing) {
@@ -400,6 +494,26 @@
       }
     }
   }
+  const ingredientButtons = new Map();
+  let ingredientMenuSignature = '';
+
+  function rebuildIngredientDropdown(ingredients) {
+    ingredientOptions.innerHTML = '';
+    ingredientButtons.clear();
+    for (const ing of ingredients) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = ing.name;
+      button.addEventListener('click', () => {
+        prepClickIngredient(ing);
+        ingredientOptions.classList.add('hidden');
+        ingredientToggle.setAttribute('aria-expanded', 'false');
+      });
+      ingredientButtons.set(ing.id, button);
+      ingredientOptions.appendChild(button);
+    }
+  }
+
   function syncIngredientDropdown() {
     const atPrep = started && !paused && !shift.showingReport && inStationRange(state.player, prep());
     ingredientDropdown.classList.toggle('available', atPrep);
@@ -407,19 +521,21 @@
       ingredientOptions.classList.add('hidden');
       ingredientToggle.setAttribute('aria-expanded', 'false');
     }
-    ingredientOptions.innerHTML = '';
-    for (const ing of availableIngredients()) {
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.textContent = ing.name;
-      const enabled = ing.isBase ? firstFreeHand() >= 0 : state.player.pizzas.some((pizza) => canAddIngredient(pizza, ing));
+
+    const ingredients = availableIngredients();
+    const signature = ingredients.map((ingredient) => ingredient.id).join('|');
+    if (signature !== ingredientMenuSignature) {
+      ingredientMenuSignature = signature;
+      rebuildIngredientDropdown(ingredients);
+    }
+
+    for (const ing of ingredients) {
+      const button = ingredientButtons.get(ing.id);
+      if (!button) continue;
+      const enabled = ing.isBase
+        ? firstFreeHand() >= 0
+        : state.player.pizzas.some((pizza) => canAddIngredient(pizza, ing));
       button.disabled = !enabled || !!state.player.action;
-      button.addEventListener('click', () => {
-        prepClickIngredient(ing);
-        ingredientOptions.classList.add('hidden');
-        ingredientToggle.setAttribute('aria-expanded', 'false');
-      });
-      ingredientOptions.appendChild(button);
     }
   }
   function toggleIngredientDropdown() {
@@ -437,6 +553,35 @@
     tryInteract();
   });
 
+
+  function syncDrinkDropdown() {
+    const available = started && !paused && !shift.showingReport && inSodaRange(state.player);
+    drinkDropdown.classList.toggle('available', available);
+    if (!available) {
+      drinkOptions.classList.add('hidden');
+      drinkToggle.setAttribute('aria-expanded', 'false');
+    }
+    for (const button of drinkOptions.querySelectorAll('button')) button.disabled = !!state.player.drink;
+  }
+  function toggleDrinkDropdown() {
+    if (!inSodaRange(state.player) || state.player.drink) return;
+    const opening = drinkOptions.classList.contains('hidden');
+    drinkOptions.classList.toggle('hidden', !opening);
+    drinkToggle.setAttribute('aria-expanded', String(opening));
+  }
+  for (const [id, drink] of Object.entries(DRINKS)) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = drink.name + ' · $' + drink.price;
+    button.addEventListener('click', () => {
+      if (!state.player.drink && inSodaRange(state.player)) state.player.drink = { id };
+      drinkOptions.classList.add('hidden');
+      drinkToggle.setAttribute('aria-expanded', 'false');
+    });
+    drinkOptions.appendChild(button);
+  }
+  drinkToggle.addEventListener('click', toggleDrinkDropdown);
+
   /* ---------- customers ---------- */
   const CUST_COLORS = ['#d96b4a', '#5b8c5a', '#7b6cb0', '#c98a3a', '#4a90b0', '#b05a7a', '#6a8a3a'];
   function freeSeat() {
@@ -452,17 +597,23 @@
     seat.occupied = true; seat.cust = null;
     const recipeIds = unlockedRecipeIds();
     const recipeId = recipeIds[(Math.random() * recipeIds.length) | 0];
+    const drinkIds = Object.keys(DRINKS);
+    const drinkId = progress.sodaCabinet && Math.random() < 0.5 ? drinkIds[(Math.random() * drinkIds.length) | 0] : null;
     const c = {
       id: Math.random(), recipeId, x: ENTRANCE.x, y: ENTRANCE.y, tx: seat.x, ty: seat.y,
       seat, takeaway, side: seat.side || 'n', table: seat.table || null, state: 'entering',
       color: CUST_COLORS[(Math.random() * CUST_COLORS.length) | 0],
-      patience: takeaway ? 42 : 55, maxPatience: takeaway ? 42 : 55,
+      patience: (takeaway ? 42 : 55) * (hostActive ? 1.25 : 1),
+      maxPatience: (takeaway ? 42 : 55) * (hostActive ? 1.25 : 1),
       eatTimer: 0, payTimer: 0, bob: Math.random() * 6, claimedBy: null,
+      drinkId, drinkDelivered: false, drinkClaimedBy: null,
+      serviceElapsed: 0, firstServiceAt: null, tipEligible: false, mood: null,
     };
     seat.cust = c; state.customers.push(c);
   }
   function updateCustomer(c, dt) {
     c.bob += dt * 6;
+    if (c.firstServiceAt === null && (c.state === 'entering' || c.state === 'waiting' || c.state === 'eating')) c.serviceElapsed += dt;
     if (c.state === 'entering') {
       moveToward(c, c.tx, c.ty, 78, dt);
       if (dist(c.x, c.y, c.tx, c.ty) < 4) { c.x = c.tx; c.y = c.ty; c.state = 'waiting'; c.waitElapsed = 0; }
@@ -470,18 +621,22 @@
       c.waitElapsed = (c.waitElapsed || 0) + dt;
       c.patience -= dt;
       if (c.patience <= 0) {
-        c.state = 'leaving'; c.claimedBy = null; shift.stats.lost++;
+        c.state = 'leaving'; c.claimedBy = null; c.mood = 'angry'; shift.stats.lost++;
         if (c.seat) { c.seat.occupied = false; c.seat.cust = null; c.seat = null; }
         SND.angry();
       }
     } else if (c.state === 'eating') {
       c.eatTimer -= dt;
-      if (c.eatTimer <= 0) { c.state = 'paying'; c.payTimer = 1.3; }
+      if (c.eatTimer <= 0) {
+        if (!c.drinkDelivered) { c.drinkId = null; c.drinkClaimedBy = null; }
+        c.state = 'paying'; c.payTimer = 1.3;
+      }
     } else if (c.state === 'paying') {
       c.payTimer -= dt;
       if (c.payTimer <= 0) {
-        const salePrice = RECIPES[c.recipeId].price;
-        state.cash += salePrice; state.served++; shift.stats.revenue += salePrice; shift.stats.served++;
+        const salePrice = RECIPES[c.recipeId].price + (c.drinkDelivered && c.drinkId ? DRINKS[c.drinkId].price : 0);
+        const tip = c.tipEligible ? Math.round(salePrice * 20) / 100 : 0;
+        state.cash += salePrice + tip; state.served++; shift.stats.revenue += salePrice; shift.stats.tips += tip; shift.stats.served++;
         shift.stats.totalWait += c.waitElapsed || 0;
         if (c.takeaway) shift.stats.takeaway++; else shift.stats.dineIn++;
         if (!c.takeaway) spawnTrash(c.x, c.y, c.table ? c.table.id : null); SND.cash();
@@ -509,7 +664,7 @@
       const dd = dist(nx, ny, t.x, t.y), min = t.r + e.r - 2;
       if (dd < min && dd > 0) { const a = Math.atan2(ny - t.y, nx - t.x); nx = t.x + Math.cos(a) * min; ny = t.y + Math.sin(a) * min; }
     }
-    if (nx > PICKUP.x - 6 && nx < PICKUP.x + PICKUP.w + 6 && ny < PICKUP.y + PICKUP.h + 6) ny = Math.max(ny, PICKUP.y + PICKUP.h + 8);
+    if (nx > PICKUP.x - 6 && nx < PICKUP.x + PICKUP.w + 6 && ny > PICKUP.y - e.r - 6 && ny < PICKUP.y + PICKUP.h + e.r + 6) ny = e.y < PICKUP.y ? PICKUP.y - e.r - 6 : PICKUP.y + PICKUP.h + e.r + 6;
     e.x = nx; e.y = ny;
     return false;
   }
@@ -527,17 +682,26 @@
   /* ---------- waiters ---------- */
   function hireWaiter(type) {
     const fast = type === 'fast';
-    const cost = fast ? FAST_WAITER_COST : WAITER_COST;
-    if (state.cash < cost) return;
+    const drinksOnly = type === 'drinks';
+    const cost = drinksOnly ? DRINKS_WAITER_COST : fast ? FAST_WAITER_COST : WAITER_COST;
+    if ((drinksOnly && !progress.sodaCabinet) || state.cash < cost) return;
     state.cash -= cost; shift.stats.staffCosts += cost;
     const base = state.player.speed / 2;
     const w = {
       id: ++waiterSeq, x: ENTRANCE.x, y: ENTRANCE.y, r: 13,
-      speed: base * (fast ? 1.3 : 1), fast,
-      hands: [null, null], state: 'enter', targetSlot: -1, targetCust: null, targetTrash: null,
+      speed: base * (fast ? 1.3 : 1), fast, drinksOnly,
+      hands: [null, null], state: 'enter', targetSlot: -1, targetCust: null, targetTrash: null, targetDrinkCust: null,
       timer: WAITER_DURATION, walk: 0,
     };
     state.waiters.push(w); SND.hire();
+  }
+
+  function hireHost() {
+    if (hostActive || state.cash < HOST_COST) return;
+    state.cash -= HOST_COST;
+    shift.stats.staffCosts += HOST_COST;
+    hostActive = true;
+    SND.hire();
   }
 
   // central, single pizza-assignment path: nearest eligible free waiter per ready slot
@@ -548,7 +712,7 @@
       if (!(s.pizza && s.done && s.claimedBy === null)) continue;
       let best = null, bd = 1e9;
       for (const w of state.waiters) {
-        if (w.remove || w.state !== 'seek') continue;
+        if (w.remove || w.state !== 'seek' || w.drinksOnly) continue;
         if (hasFreeHand(w) < 0) continue;
         const d = dist(w.x, w.y, ov.use.x, ov.use.y);
         if (d < bd) { bd = d; best = w; }
@@ -558,10 +722,21 @@
   }
 
   function pickWaiterJob(w, dt) {
-    if (carriedPizzaHand(w) >= 0) { w.state = 'tocust'; return; }     // service: deliver pizza
-    if (carriedTrashHand(w) >= 0) { w.state = 'tobin'; return; }      // bin carried trash
-    if (hasFreeHand(w) >= 0 && state.trash.some((t) => t.claimedBy === null)) { w.state = 'totrash'; return; }
-    moveEntity(w, 660, 250, dt); // idle near oven
+    const drinkHand = carriedDrinkHand(w);
+    if (!w.drinksOnly && carriedPizzaHand(w) >= 0) { w.state = 'tocust'; return; }
+    if (!w.drinksOnly && carriedTrashHand(w) >= 0) { w.state = 'tobin'; return; }
+    if (!w.drinksOnly && hasFreeHand(w) >= 0 && state.trash.some((t) => t.claimedBy === null)) { w.state = 'totrash'; return; }
+    if (drinkHand >= 0) { w.state = 'todrinkcust'; return; }
+    if (progress.sodaCabinet && hasFreeHand(w) >= 0) {
+      const target = mostUrgentDrinkCustomer(null, w.id);
+      if (target) {
+        target.drinkClaimedBy = w.id;
+        w.targetDrinkCust = target;
+        w.state = 'todrinkcabinet';
+        return;
+      }
+    }
+    moveEntity(w, w.drinksOnly ? SODA.use.x : 660, w.drinksOnly ? SODA.use.y : 250, dt);
   }
 
   function updateWaiter(w, dt) {
@@ -579,12 +754,14 @@
           const h = w.hands[i];
           if (!h) continue;
           if (h.t === 'pizza') returnPizzaToOven(h.pz);
-          else state.trash.push({ x: w.x, y: w.y + 6, claimedBy: null });
+          else if (h.t === 'trash') state.trash.push({ x: w.x, y: w.y + 6, claimedBy: null });
+          else if (h.t === 'drink' && w.targetDrinkCust && w.targetDrinkCust.drinkClaimedBy === w.id) w.targetDrinkCust.drinkClaimedBy = null;
           w.hands[i] = null;
         }
       }
       if (w.targetCust && w.targetCust.claimedBy === w.id) w.targetCust.claimedBy = null;
       if (w.targetTrash && w.targetTrash.claimedBy === w.id) w.targetTrash.claimedBy = null;
+      if (w.targetDrinkCust && w.targetDrinkCust.drinkClaimedBy === w.id) w.targetDrinkCust.drinkClaimedBy = null;
       if (moveEntity(w, ENTRANCE.x, ENTRANCE.y, dt)) w.remove = true;
       return;
     }
@@ -607,7 +784,7 @@
         if (w.targetCust && w.targetCust.claimedBy === w.id) w.targetCust.claimedBy = null;
         const carriedRecipe = pizzaRecipeId(w.hands[ph].pz);
         const pick = mostImpatientUnclaimed(carriedRecipe);
-        if (!pick) { w.targetCust = null; moveEntity(w, 660, 250, dt); return; } // hold pizza, wait
+        if (!pick) { w.targetCust = null; w.state = 'discard'; return; }
         pick.claimedBy = w.id; w.targetCust = pick;
       }
       const tgt = w.targetCust;
@@ -640,6 +817,66 @@
     if (w.state === 'tobin') {
       if (moveEntity(w, BIN.x, BIN.y, dt) || dist(w.x, w.y, BIN.x, BIN.y) < 46) {
         for (let i = 0; i < w.hands.length; i++) if (w.hands[i] && w.hands[i].t === 'trash') w.hands[i] = null;
+        SND.bin(); w.state = 'seek';
+      }
+      return;
+    }
+
+    if (w.state === 'todrinkcabinet') {
+      const target = w.targetDrinkCust;
+      if (!target || !target.drinkId || target.drinkDelivered || (target.state !== 'waiting' && target.state !== 'eating')) {
+        if (target && target.drinkClaimedBy === w.id) target.drinkClaimedBy = null;
+        w.targetDrinkCust = null; w.state = 'seek'; return;
+      }
+      if (moveEntity(w, SODA.use.x, SODA.use.y, dt)) {
+        const hand = hasFreeHand(w);
+        if (hand >= 0) w.hands[hand] = { t: 'drink', id: target.drinkId };
+        w.state = 'todrinkcust';
+      }
+      return;
+    }
+
+    if (w.state === 'todrinkcust') {
+      const hand = carriedDrinkHand(w);
+      const target = w.targetDrinkCust;
+      if (hand < 0) { w.targetDrinkCust = null; w.state = 'seek'; return; }
+      if (!target || !target.drinkId || target.drinkDelivered || (target.state !== 'waiting' && target.state !== 'eating')) {
+        if (target && target.drinkClaimedBy === w.id) target.drinkClaimedBy = null;
+        const replacement = mostUrgentDrinkCustomer(w.hands[hand].id, w.id);
+        if (replacement) {
+          replacement.drinkClaimedBy = w.id;
+          w.targetDrinkCust = replacement;
+        } else {
+          w.targetDrinkCust = null; w.state = 'discard';
+        }
+        return;
+      }
+      if (moveEntity(w, target.x, target.y, dt) || dist(w.x, w.y, target.x, target.y) < 42) {
+        if (deliverDrink(target, w.hands[hand], w.id)) w.hands[hand] = null;
+        w.targetDrinkCust = null; w.state = 'seek';
+      }
+      return;
+    }
+
+    if (w.state === 'discard') {
+      const pizzaHand = carriedPizzaHand(w);
+      const drinkHand = carriedDrinkHand(w);
+      if (pizzaHand >= 0) {
+        const recipeId = pizzaRecipeId(w.hands[pizzaHand].pz);
+        const renewed = mostImpatientUnclaimed(recipeId);
+        if (renewed) {
+          renewed.claimedBy = w.id; w.targetCust = renewed; w.state = 'tocust'; return;
+        }
+      }
+      if (drinkHand >= 0) {
+        const renewed = mostUrgentDrinkCustomer(w.hands[drinkHand].id, w.id);
+        if (renewed) {
+          renewed.drinkClaimedBy = w.id; w.targetDrinkCust = renewed; w.state = 'todrinkcust'; return;
+        }
+      }
+      if (moveEntity(w, BIN.x, BIN.y, dt) || dist(w.x, w.y, BIN.x, BIN.y) < 46) {
+        if (pizzaHand >= 0) { w.hands[pizzaHand] = null; state.cash -= 3; shift.stats.wasteCosts += 3; }
+        else if (drinkHand >= 0) { w.hands[drinkHand] = null; state.cash -= 1; shift.stats.wasteCosts += 1; }
         SND.bin(); w.state = 'seek';
       }
       return;
@@ -747,7 +984,7 @@
         const d = dist(nx, ny, t.x, t.y), min = t.r + p.r - 2;
         if (d < min && d > 0) { const a = Math.atan2(ny - t.y, nx - t.x); nx = t.x + Math.cos(a) * min; ny = t.y + Math.sin(a) * min; }
       }
-      if (nx > PICKUP.x - 6 && nx < PICKUP.x + PICKUP.w + 6 && ny < PICKUP.y + PICKUP.h + 6) ny = Math.max(ny, PICKUP.y + PICKUP.h + 8);
+      if (nx > PICKUP.x - 6 && nx < PICKUP.x + PICKUP.w + 6 && ny > PICKUP.y - p.r - 6 && ny < PICKUP.y + PICKUP.h + p.r + 6) ny = p.y < PICKUP.y ? PICKUP.y - p.r - 6 : PICKUP.y + PICKUP.h + p.r + 6;
       p.x = nx; p.y = ny; p.walk += dt * 10;
       if (Math.floor(p.walk) !== Math.floor(p.walk - dt * 10)) SND.step();
     }
@@ -866,6 +1103,19 @@
     ctx.fillStyle = C.text; ctx.font = "700 12px 'Nunito', sans-serif"; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText('Pickup', PICKUP.x + PICKUP.w / 2, PICKUP.y + PICKUP.h / 2 + 2);
   }
+  function drawSodaCabinet() {
+    if (!progress.sodaCabinet) return;
+    ctx.fillStyle = '#35434a'; roundRect(SODA.x, SODA.y, SODA.w, SODA.h, 8); ctx.fill();
+    ctx.fillStyle = '#8ed0e8'; roundRect(SODA.x + 7, SODA.y + 8, SODA.w - 14, 34, 5); ctx.fill();
+    ctx.fillStyle = '#1f292e'; roundRect(SODA.x + 7, SODA.y + 48, SODA.w - 14, 16, 4); ctx.fill();
+    ctx.fillStyle = C.textInv; ctx.font = "700 9px 'Nunito', sans-serif"; ctx.textAlign = 'center';
+    ctx.fillText('DRINKS', SODA.x + SODA.w / 2, SODA.y + 58);
+  }
+  function drawDrinkIcon(id, x, y) {
+    const drink = DRINKS[id]; if (!drink) return;
+    ctx.fillStyle = drink.color; roundRect(x - 4, y - 8, 8, 16, 2); ctx.fill();
+    ctx.fillStyle = '#eef7fa'; ctx.fillRect(x - 3, y - 6, 6, 2);
+  }
   function drawPizza(cx, cy, stage, scale = 1) {
     const r = 13 * scale;
     if (stage === 'dough') {
@@ -915,6 +1165,7 @@
     const carried = p.pizzas.filter(Boolean);
     carried.forEach((pz, i) => { const off = carried.length === 1 ? 0 : i === 0 ? -9 : 9; drawPizza(p.x + p.dir * 4 + off, p.y - 16, pizzaStage(pz), 0.85); });
     if (p.trash) drawTrashIcon(p.x - 12, p.y - 14);
+    if (p.drink) drawDrinkIcon(p.drink.id, p.x + 12, p.y - 16);
     if (p.action) {
       const pct = p.action.elapsed / p.action.duration, bw = 52, bx = p.x - bw / 2, by = p.y - 44;
       ctx.fillStyle = 'rgba(0,0,0,0.55)'; roundRect(bx - 2, by - 2, bw + 4, 12, 6); ctx.fill();
@@ -924,6 +1175,12 @@
       ctx.fillStyle = 'rgba(36,26,18,0.92)'; roundRect(p.x - lw / 2, ly - 8, lw, 16, 8); ctx.fill();
       ctx.fillStyle = C.textInv; ctx.fillText(p.action.label, p.x, ly);
     }
+  }
+  function drawHost() {
+    if (!hostActive) return;
+    drawPerson(480, 578, '#d87845', { bob: state.time * 2 });
+    ctx.fillStyle = '#fff7ec'; ctx.font = "800 9px 'Nunito', sans-serif"; ctx.textAlign = 'center';
+    ctx.fillText('HOST', 480, 600);
   }
   function drawChef(chef) {
     drawPerson(chef.x, chef.y, '#f2f2f2', { bob: chef.walk });
@@ -959,6 +1216,7 @@
       const cx = w.x + off, cy = w.y - 26;
       ctx.fillStyle = C.tray; roundRect(cx - 10, cy - 3, 20, 6, 3); ctx.fill();
       if (h.t === 'pizza') drawPizza(cx, cy - 6, pizzaStage(h.pz), 0.8);
+      else if (h.t === 'drink') drawDrinkIcon(h.id, cx, cy - 8);
       else drawTrashIcon(cx, cy - 8);
     });
     const pct = clamp(w.timer / WAITER_DURATION, 0, 1), bw = 24, bx = w.x - bw / 2, by = w.y + 18;
@@ -970,7 +1228,8 @@
     if (c.state === 'waiting') {
       const off = { n: { x: 0, y: -34 }, s: { x: 0, y: 34 }, e: { x: 42, y: 0 }, w: { x: -42, y: 0 } }[c.side] || { x: 0, y: -34 };
       const bx = c.x + off.x, by = c.y + off.y;
-      const txt = RECIPES[c.recipeId].name + (c.takeaway ? ' · to go' : '');
+      const drinkText = c.drinkId && !c.drinkDelivered ? ' + ' + DRINKS[c.drinkId].name : '';
+      const txt = RECIPES[c.recipeId].name + drinkText + (c.takeaway ? ' · to go' : '');
       ctx.font = "800 10px 'Nunito', sans-serif"; const tw = ctx.measureText(txt).width + 14;
       ctx.fillStyle = C.bubble; roundRect(bx - tw / 2, by - 11, tw, 20, 7); ctx.fill();
       ctx.beginPath();
@@ -994,9 +1253,25 @@
       ctx.globalAlpha = 1 - prog * 0.7;
       ctx.fillStyle = C.money; roundRect(c.x - 9, fy - 7, 18, 14, 3); ctx.fill();
       ctx.fillStyle = '#fff'; ctx.font = "800 11px 'Nunito', sans-serif"; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText('$' + RECIPES[c.recipeId].price, c.x, fy);
+      const paid = RECIPES[c.recipeId].price + (c.drinkDelivered && c.drinkId ? DRINKS[c.drinkId].price : 0);
+      const tip = c.tipEligible ? Math.round(paid * 20) / 100 : 0;
+      ctx.fillText('$' + (paid + tip).toFixed(tip ? 2 : 0), c.x, fy);
       ctx.globalAlpha = 1;
+    } else if (c.state === 'leaving' && c.mood) {
+      drawMoodFace(c.x, c.y - 31, c.mood);
     }
+  }
+  function drawMoodFace(x, y, mood) {
+    ctx.fillStyle = mood === 'angry' ? '#e53935' : mood === 'happy' ? '#7cb342' : '#f4c542';
+    ctx.beginPath(); ctx.arc(x, y, 10, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#2c241b';
+    ctx.beginPath(); ctx.arc(x - 3.5, y - 2, 1.2, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(x + 3.5, y - 2, 1.2, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#2c241b'; ctx.lineWidth = 1.5; ctx.beginPath();
+    if (mood === 'happy') ctx.arc(x, y + 1, 4.5, 0.15 * Math.PI, 0.85 * Math.PI);
+    else if (mood === 'angry') ctx.arc(x, y + 7, 4.5, 1.15 * Math.PI, 1.85 * Math.PI);
+    else { ctx.moveTo(x - 4, y + 4); ctx.lineTo(x + 4, y + 4); }
+    ctx.stroke();
   }
   function drawHUD() {
     ctx.fillStyle = 'rgba(26,20,16,0.82)'; roundRect(12, 12, 230, 34, 8); ctx.fill();
@@ -1033,12 +1308,13 @@
   function syncHireUI() {
     if (!hireBtn || !hireMenu) return;
     const active = state.waiters.filter((w) => w.state !== 'leave').length
-                 + state.chefs.filter((c) => c.state !== 'leave').length;
+                 + state.chefs.filter((c) => c.state !== 'leave').length
+                 + (hostActive ? 1 : 0);
     hireBtn.textContent = 'Hire staff \u25BE' + (active > 0 ? '  (\u00D7' + active + ')' : '');
     hireMenu.querySelectorAll('button').forEach((b) => {
       const t = b.dataset.type;
-      const cost = t === 'chef' ? CHEF_COST : t === 'fast' ? FAST_WAITER_COST : WAITER_COST;
-      b.classList.toggle('off', state.cash < cost);
+      const cost = t === 'chef' ? CHEF_COST : t === 'host' ? HOST_COST : t === 'drinks' ? DRINKS_WAITER_COST : t === 'fast' ? FAST_WAITER_COST : WAITER_COST;
+      b.classList.toggle('off', state.cash < cost || (t === 'drinks' && !progress.sodaCabinet) || (t === 'host' && hostActive));
     });
   }
   if (hireBtn) hireBtn.addEventListener('click', (e) => {
@@ -1049,7 +1325,9 @@
   if (hireMenu) hireMenu.querySelectorAll('button').forEach((b) => {
     b.addEventListener('click', (e) => {
       e.stopPropagation();
-      if (b.dataset.type === 'chef') hireChef(); else hireWaiter(b.dataset.type);
+      if (b.dataset.type === 'chef') hireChef();
+      else if (b.dataset.type === 'host') hireHost();
+      else hireWaiter(b.dataset.type);
       hireMenu.classList.add('hidden');
     });
   });
@@ -1073,12 +1351,14 @@
     hireMenu.classList.add('hidden'); hireWrap.classList.add('paused');
     reportTitle.textContent = 'Day ' + shift.day + ' report';
     const avgWait = shift.stats.served ? Math.round(shift.stats.totalWait / shift.stats.served) : 0;
-    const net = shift.stats.revenue - shift.stats.staffCosts;
+    const net = shift.stats.revenue + shift.stats.tips - shift.stats.staffCosts - shift.stats.wasteCosts;
     reportStats.innerHTML =
       '<div><span>Customers served</span><strong>' + shift.stats.served + '</strong></div>' +
       '<div><span>Customers lost</span><strong>' + shift.stats.lost + '</strong></div>' +
       '<div><span>Revenue</span><strong>$' + shift.stats.revenue + '</strong></div>' +
       '<div><span>Staff costs</span><strong>-$' + shift.stats.staffCosts + '</strong></div>' +
+      '<div><span>Waste</span><strong>-$' + shift.stats.wasteCosts + '</strong></div>' +
+      '<div><span>Tips</span><strong>$' + shift.stats.tips.toFixed(2) + '</strong></div>' +
       '<div><span>Net shift result</span><strong>' + (net < 0 ? '-$' + Math.abs(net) : '$' + net) + '</strong></div>' +
       '<div><span>Average wait</span><strong>' + avgWait + 's</strong></div>';
     shift.recipeUnlockUsed = false; refreshReportOptions();
@@ -1088,10 +1368,13 @@
   function refreshReportOptions() {
     doughUpgradeBtn.disabled = progress.doughLevel >= 2 || state.cash < 50;
     ovenUpgradeBtn.disabled = progress.ovenLevel >= 2 || state.cash < 70;
+    sodaUpgradeBtn.disabled = progress.sodaCabinet || state.cash < 150;
     doughUpgradeBtn.classList.toggle('purchased', progress.doughLevel >= 2);
     ovenUpgradeBtn.classList.toggle('purchased', progress.ovenLevel >= 2);
+    sodaUpgradeBtn.classList.toggle('purchased', progress.sodaCabinet);
     doughUpgradeBtn.querySelector('span').textContent = progress.doughLevel >= 2 ? 'Purchased - 20% faster' : '20% faster kneading - $50';
     ovenUpgradeBtn.querySelector('span').textContent = progress.ovenLevel >= 2 ? 'Purchased - 20% faster' : '20% faster baking - $70';
+    sodaUpgradeBtn.querySelector('span').textContent = progress.sodaCabinet ? 'Purchased · Coke, Water, Dew' : 'Permanent drinks service · $150';
     recipeButtons.forEach((button) => {
       const id = button.dataset.recipe, unlocked = progress.unlockedRecipes.has(id);
       button.disabled = unlocked || state.cash < 60;
@@ -1107,6 +1390,13 @@
     if (progress.ovenLevel >= 2 || state.cash < 70) return;
     state.cash -= 70; progress.ovenLevel = 2; refreshReportOptions();
   });
+  sodaUpgradeBtn.addEventListener('click', () => {
+    if (progress.sodaCabinet || state.cash < 150) return;
+    state.cash -= 150;
+    progress.sodaCabinet = true;
+    refreshReportOptions();
+  });
+
   recipeButtons.forEach((button) => button.addEventListener('click', () => {
     const id = button.dataset.recipe;
     if (progress.unlockedRecipes.has(id) || state.cash < 60) return;
@@ -1115,8 +1405,8 @@
     refreshReportOptions();
   }));
   function resetRestaurantForNextShift() {
-    state.customers = []; state.waiters = []; state.chefs = []; state.trash = []; state.spawnTimer = 2.5;
-    state.player.x = 480; state.player.y = 500; state.player.pizzas = [null, null]; state.player.trash = null; state.player.action = null;
+    state.customers = []; state.waiters = []; state.chefs = []; state.trash = []; state.spawnTimer = 2.5; hostActive = false;
+    state.player.x = 480; state.player.y = 500; state.player.pizzas = [null, null]; state.player.drink = null; state.player.trash = null; state.player.action = null;
     for (const slot of oven().slots) { slot.pizza = null; slot.timer = 0; slot.baking = false; slot.done = false; slot.claimedBy = null; }
     for (const table of TABLES) for (const seat of table.seats) { seat.occupied = false; seat.cust = null; }
     for (const spot of TAKEAWAY_SPOTS) { spot.occupied = false; spot.cust = null; }
@@ -1174,6 +1464,7 @@
     updateShift(dt);
     updatePlayer(dt);
     syncIngredientDropdown();
+    syncDrinkDropdown();
     updateOven(dt);
     assignJobs();
     for (const w of state.waiters) updateWaiter(w, dt);
@@ -1193,12 +1484,13 @@
     syncHireUI();
   }
   function render() {
-    drawFloor(); drawBin(); drawPickup(); drawTables(); drawTrashPiles();
+    drawFloor(); drawBin(); drawPickup(); drawSodaCabinet(); drawTables(); drawTrashPiles();
     for (const s of STATIONS) drawStation(s);
     const people = [];
     for (const c of state.customers) people.push({ y: c.y, d: () => drawCustomer(c) });
     for (const w of state.waiters) people.push({ y: w.y, d: () => drawWaiter(w) });
     for (const ch of state.chefs) people.push({ y: ch.y, d: () => drawChef(ch) });
+    if (hostActive) people.push({ y: 578, d: drawHost });
     people.push({ y: state.player.y, d: drawPlayer });
     people.sort((a, b) => a.y - b.y).forEach((p) => p.d());
     drawHUD(); drawContext();
@@ -1218,6 +1510,7 @@
     if (hireWrap) hireWrap.classList.remove('hidden');
     if (gameControls) gameControls.classList.remove('hidden');
     if (ingredientDropdown) ingredientDropdown.classList.remove('hidden');
+    if (drinkDropdown) drinkDropdown.classList.remove('hidden');
     last = performance.now();
     requestAnimationFrame(frame);
   }
