@@ -67,4 +67,4 @@ Permanent Level 2 upgrades are available from the report:
 - Faster dough: $50, reducing kneading time by 20%
 - Faster oven: $70, reducing baking time by 20%
 
-Margherita is available from the beginning. After each shift, one new recipe can be unlocked for free and selected for the next day. Pepperoni and Funghi are currently available as unlocks. Each new day increases customer pressure slightly.
+Margherita is available from the beginning. Pepperoni and Funghi can each be permanently unlocked for $60 from the end-of-day report. Customers randomly order from all unlocked recipes; Margherita sells for $9, while Pepperoni and Funghi sell for $12. Ingredients are selected from the Prep dropdown and must follow the recipe order shown in the pause menu. Each new day increases customer pressure slightly.
