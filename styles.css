@@ -148,3 +148,73 @@ canvas#game {
 #hireMenu button[data-type='fast']:hover { background: #34b3a3; }
 #hireMenu button[data-type='chef']:hover { background: #d04432; }
 #hireMenu button.off { background: #4a4038 !important; color: #8a6f4e; cursor: not-allowed; }
+
+
+#gameControls {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  z-index: 7;
+  display: flex;
+  gap: 6px;
+  transform: translateX(-50%);
+}
+
+#gameControls.hidden { display: none; }
+
+#gameControls button {
+  border: 1px solid rgba(255, 217, 160, 0.35);
+  border-radius: 999px;
+  padding: 7px 13px;
+  color: #fff7ec;
+  background: rgba(36, 26, 18, 0.88);
+  font: 800 clamp(0.68rem, 1.5vw, 0.8rem) 'Nunito', sans-serif;
+  cursor: pointer;
+}
+
+#gameControls button:hover,
+#gameControls button:focus-visible {
+  background: #4a3f33;
+  outline: 2px solid #ffd9a0;
+  outline-offset: 2px;
+}
+
+#pauseOverlay {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: #fff7ec;
+  background: rgba(26, 20, 16, 0.72);
+  backdrop-filter: blur(2px);
+}
+
+#pauseOverlay.hidden { display: none; }
+
+#pauseOverlay strong {
+  color: #ffd9a0;
+  font: 700 clamp(2rem, 6vw, 3.4rem) 'Fredoka', sans-serif;
+}
+
+#pauseOverlay span {
+  font-weight: 800;
+}
+
+#hireWrap.paused {
+  pointer-events: none;
+  opacity: 0.45;
+}
+
+@media (max-width: 620px) {
+  #gameControls {
+    top: 8px;
+  }
+
+  #gameControls button {
+    padding: 6px 10px;
+  }
+}
