@@ -380,7 +380,10 @@
     }
     const pr = prep();
     if (inStationRange(p, pr)) {
-      return { kind: 'prep-menu', target: pr, ok: true, text: 'E: Choose ingredient' };
+      const r = prepRequirement(p.pizzas);
+      if (r.ok && !r.make) return Object.assign({ kind: 'prep-step', target: pr }, r, { text: 'E: ' + r.action });
+      if (firstFreeHand() >= 0) return { kind: 'prep-menu', target: pr, ok: true, text: 'E: Start pizza' };
+      return { kind: 'prep-step', target: pr, ok: false, text: r.hint || 'Hands full' };
     }
     return null;
   }
@@ -459,6 +462,9 @@
     const c = getContext();
     if (!c || c.ok === false) return;
     if (c.kind === 'prep-menu') toggleIngredientDropdown();
+    else if (c.kind === 'prep-step') {
+      p.action = { label: c.action, duration: c.dur, elapsed: 0, onComplete: () => applyPrep(c) };
+    }
     else if (c.kind === 'oven') ovenInteract(c);
     else if (c.kind === 'deliver') deliver(c.target, c.hand);
     else if (c.kind === 'deliver-drink') {
@@ -477,39 +483,35 @@
     }
     else if (c.kind === 'pickup') { if (c.target) { p.trash = { t: 'trash' }; const i = state.trash.indexOf(c.target); if (i >= 0) state.trash.splice(i, 1); SND.done(); } }
   }
-  function prepClickIngredient(ing) {
+  function startPlayerPizza(recipeId) {
     const p = state.player;
-    if (p.action) return;
-    if (!inStationRange(p, prep())) return;
-    if (ing.isBase) {
-      const free = firstFreeHand();
-      if (free >= 0) p.action = { label: 'Knead dough', duration: kneadDuration(), elapsed: 0, onComplete: () => { p.pizzas[free] = newPizza(ing.id); SND.done(); } };
-      return;
-    }
-    for (let i = 0; i < p.pizzas.length; i++) {
-      if (canAddIngredient(p.pizzas[i], ing)) {
-        const idx = i, id = ing.id, nm = ing.name, dur = ing.dur;
-        p.action = { label: 'Add ' + nm, duration: dur, elapsed: 0, onComplete: () => { if (p.pizzas[idx]) p.pizzas[idx].added.add(id); SND.done(); } };
-        return;
-      }
-    }
+    if (p.action || !inStationRange(p, prep())) return;
+    const free = firstFreeHand();
+    if (free < 0 || !RECIPES[recipeId] || !unlockedRecipeIds().includes(recipeId)) return;
+    const recipeName = RECIPES[recipeId].name;
+    p.action = {
+      label: 'Knead ' + recipeName,
+      duration: kneadDuration(),
+      elapsed: 0,
+      onComplete: () => { p.pizzas[free] = newPizza('dough', recipeId); SND.done(); }
+    };
   }
   const ingredientButtons = new Map();
   let ingredientMenuSignature = '';
 
-  function rebuildIngredientDropdown(ingredients) {
+  function rebuildIngredientDropdown(recipeIds) {
     ingredientOptions.innerHTML = '';
     ingredientButtons.clear();
-    for (const ing of ingredients) {
+    for (const recipeId of recipeIds) {
       const button = document.createElement('button');
       button.type = 'button';
-      button.textContent = ing.name;
+      button.textContent = RECIPES[recipeId].name;
       button.addEventListener('click', () => {
-        prepClickIngredient(ing);
+        startPlayerPizza(recipeId);
         ingredientOptions.classList.add('hidden');
         ingredientToggle.setAttribute('aria-expanded', 'false');
       });
-      ingredientButtons.set(ing.id, button);
+      ingredientButtons.set(recipeId, button);
       ingredientOptions.appendChild(button);
     }
   }
@@ -522,20 +524,17 @@
       ingredientToggle.setAttribute('aria-expanded', 'false');
     }
 
-    const ingredients = availableIngredients();
-    const signature = ingredients.map((ingredient) => ingredient.id).join('|');
+    const recipeIds = unlockedRecipeIds();
+    const signature = recipeIds.join('|');
     if (signature !== ingredientMenuSignature) {
       ingredientMenuSignature = signature;
-      rebuildIngredientDropdown(ingredients);
+      rebuildIngredientDropdown(recipeIds);
     }
 
-    for (const ing of ingredients) {
-      const button = ingredientButtons.get(ing.id);
-      if (!button) continue;
-      const enabled = ing.isBase
-        ? firstFreeHand() >= 0
-        : state.player.pizzas.some((pizza) => canAddIngredient(pizza, ing));
-      button.disabled = !enabled || !!state.player.action;
+    const canStart = firstFreeHand() >= 0 && !state.player.action;
+    for (const recipeId of recipeIds) {
+      const button = ingredientButtons.get(recipeId);
+      if (button) button.disabled = !canStart;
     }
   }
   function toggleIngredientDropdown() {
@@ -1035,7 +1034,7 @@
     // ribs
     ctx.strokeStyle = 'rgba(0,0,0,0.25)'; ctx.lineWidth = 1.5;
     for (let i = -1; i <= 1; i++) { ctx.beginPath(); ctx.moveTo(BIN.x - 11, BIN.y - 4 + i * 7); ctx.lineTo(BIN.x + 11, BIN.y - 4 + i * 7); ctx.stroke(); }
-    ctx.fillStyle = C.text; ctx.font = "700 9px 'Nunito', sans-serif"; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = C.text; ctx.font = "700 9px 'Inter', sans-serif"; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText('Trash', BIN.x, BIN.y + 22);
   }
   function drawTrashPiles() {
@@ -1052,7 +1051,7 @@
     ctx.fillStyle = C.counterTop; roundRect(x, y, s.w, 22, 10); ctx.fill(); ctx.fillRect(x, y + 8, s.w, 14);
     ctx.fillStyle = s.id === 'oven' ? C.oven : '#f0e3c0';
     roundRect(x + 10, y + 28, s.w - 20, s.h - 38, 8); ctx.fill();
-    ctx.fillStyle = C.text; ctx.font = "700 15px 'Nunito', sans-serif"; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = C.text; ctx.font = "700 15px 'Inter', sans-serif"; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText(s.label, s.cx, y + 14);
     if (s.id === 'prep') {
       const atPrep = inStationRange(state.player, s);
@@ -1100,7 +1099,7 @@
   function drawPickup() {
     ctx.fillStyle = C.counter; roundRect(PICKUP.x, PICKUP.y, PICKUP.w, PICKUP.h, 8); ctx.fill();
     ctx.fillStyle = C.counterTop; roundRect(PICKUP.x, PICKUP.y, PICKUP.w, 10, 8); ctx.fill();
-    ctx.fillStyle = C.text; ctx.font = "700 12px 'Nunito', sans-serif"; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = C.text; ctx.font = "700 12px 'Inter', sans-serif"; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText('Pickup', PICKUP.x + PICKUP.w / 2, PICKUP.y + PICKUP.h / 2 + 2);
   }
   function drawSodaCabinet() {
@@ -1108,7 +1107,7 @@
     ctx.fillStyle = '#35434a'; roundRect(SODA.x, SODA.y, SODA.w, SODA.h, 8); ctx.fill();
     ctx.fillStyle = '#8ed0e8'; roundRect(SODA.x + 7, SODA.y + 8, SODA.w - 14, 34, 5); ctx.fill();
     ctx.fillStyle = '#1f292e'; roundRect(SODA.x + 7, SODA.y + 48, SODA.w - 14, 16, 4); ctx.fill();
-    ctx.fillStyle = C.textInv; ctx.font = "700 9px 'Nunito', sans-serif"; ctx.textAlign = 'center';
+    ctx.fillStyle = C.textInv; ctx.font = "700 9px 'Inter', sans-serif"; ctx.textAlign = 'center';
     ctx.fillText('DRINKS', SODA.x + SODA.w / 2, SODA.y + 58);
   }
   function drawDrinkIcon(id, x, y) {
@@ -1170,7 +1169,7 @@
       const pct = p.action.elapsed / p.action.duration, bw = 52, bx = p.x - bw / 2, by = p.y - 44;
       ctx.fillStyle = 'rgba(0,0,0,0.55)'; roundRect(bx - 2, by - 2, bw + 4, 12, 6); ctx.fill();
       ctx.fillStyle = C.good; roundRect(bx, by, bw * pct, 8, 4); ctx.fill();
-      ctx.font = "700 11px 'Nunito', sans-serif"; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.font = "700 11px 'Inter', sans-serif"; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       const lw = ctx.measureText(p.action.label).width + 14, ly = by - 11;
       ctx.fillStyle = 'rgba(36,26,18,0.92)'; roundRect(p.x - lw / 2, ly - 8, lw, 16, 8); ctx.fill();
       ctx.fillStyle = C.textInv; ctx.fillText(p.action.label, p.x, ly);
@@ -1179,7 +1178,7 @@
   function drawHost() {
     if (!hostActive) return;
     drawPerson(480, 578, '#d87845', { bob: state.time * 2 });
-    ctx.fillStyle = '#fff7ec'; ctx.font = "800 9px 'Nunito', sans-serif"; ctx.textAlign = 'center';
+    ctx.fillStyle = '#fff7ec'; ctx.font = "800 9px 'Inter', sans-serif"; ctx.textAlign = 'center';
     ctx.fillText('HOST', 480, 600);
   }
   function drawChef(chef) {
@@ -1196,7 +1195,7 @@
       const pct = chef.action.elapsed / chef.action.duration, bw = 52, bx = chef.x - bw / 2, by = chef.y - 44;
       ctx.fillStyle = 'rgba(0,0,0,0.55)'; roundRect(bx - 2, by - 2, bw + 4, 12, 6); ctx.fill();
       ctx.fillStyle = C.good; roundRect(bx, by, bw * pct, 8, 4); ctx.fill();
-      ctx.font = "700 11px 'Nunito', sans-serif"; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.font = "700 11px 'Inter', sans-serif"; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       const lw = ctx.measureText(chef.action.label).width + 14, ly = by - 11;
       ctx.fillStyle = 'rgba(36,26,18,0.92)'; roundRect(chef.x - lw / 2, ly - 8, lw, 16, 8); ctx.fill();
       ctx.fillStyle = C.textInv; ctx.fillText(chef.action.label, chef.x, ly);
@@ -1222,6 +1221,31 @@
     const pct = clamp(w.timer / WAITER_DURATION, 0, 1), bw = 24, bx = w.x - bw / 2, by = w.y + 18;
     ctx.fillStyle = 'rgba(0,0,0,0.35)'; roundRect(bx, by, bw, 3, 2); ctx.fill();
     ctx.fillStyle = pct > 0.33 ? C.good : pct > 0.15 ? '#e0a93a' : C.bad; roundRect(bx, by, bw * pct, 3, 2); ctx.fill();
+
+    const taskLabels = {
+      tocust: 'Serve pizza',
+      tobin: 'Take trash out',
+      totrash: 'Clear table',
+      todrinkcust: 'Serve drink',
+      todrinkcabinet: 'Get drink',
+      discard: 'Discard item',
+      leave: 'Clocking out'
+    };
+    const task = taskLabels[w.state];
+    if (task) {
+      ctx.font = "700 9px 'Inter', sans-serif";
+      const bubbleW = ctx.measureText(task).width + 14;
+      const bubbleY = w.y - (carried.length ? 48 : 36);
+      ctx.fillStyle = 'rgba(255,250,239,0.96)';
+      roundRect(w.x - bubbleW / 2, bubbleY - 9, bubbleW, 18, 7); ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(w.x - 3, bubbleY + 8);
+      ctx.lineTo(w.x + 3, bubbleY + 8);
+      ctx.lineTo(w.x, bubbleY + 13);
+      ctx.closePath(); ctx.fill();
+      ctx.fillStyle = C.text; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(task, w.x, bubbleY);
+    }
   }
   function drawCustomer(c) {
     drawPerson(c.x, c.y, c.color, { bob: c.state === 'waiting' ? c.bob : (c.state === 'entering' || c.state === 'leaving' ? c.bob * 2 : 0) });
@@ -1230,7 +1254,7 @@
       const bx = c.x + off.x, by = c.y + off.y;
       const drinkText = c.drinkId && !c.drinkDelivered ? ' + ' + DRINKS[c.drinkId].name : '';
       const txt = RECIPES[c.recipeId].name + drinkText + (c.takeaway ? ' · to go' : '');
-      ctx.font = "800 10px 'Nunito', sans-serif"; const tw = ctx.measureText(txt).width + 14;
+      ctx.font = "800 10px 'Inter', sans-serif"; const tw = ctx.measureText(txt).width + 14;
       ctx.fillStyle = C.bubble; roundRect(bx - tw / 2, by - 11, tw, 20, 7); ctx.fill();
       ctx.beginPath();
       if (c.side === 'n') { ctx.moveTo(bx - 4, by + 8); ctx.lineTo(bx + 4, by + 8); ctx.lineTo(bx, by + 14); }
@@ -1244,7 +1268,7 @@
       ctx.fillStyle = 'rgba(0,0,0,0.3)'; roundRect(c.x - 14, ry, 28, 4, 2); ctx.fill();
       ctx.fillStyle = pct > 0.4 ? C.good : C.bad; roundRect(c.x - 14, ry, 28 * pct, 4, 2); ctx.fill();
     } else if (c.state === 'eating') {
-      ctx.fillStyle = C.good; ctx.font = "800 11px 'Nunito', sans-serif"; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillStyle = C.good; ctx.font = "800 11px 'Inter', sans-serif"; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillText('•••', c.x, c.y - 26);
     } else if (c.state === 'paying') {
       // floating green $ bill, rises + fades
@@ -1252,7 +1276,7 @@
       const fy = c.y - 24 - prog * 16;
       ctx.globalAlpha = 1 - prog * 0.7;
       ctx.fillStyle = C.money; roundRect(c.x - 9, fy - 7, 18, 14, 3); ctx.fill();
-      ctx.fillStyle = '#fff'; ctx.font = "800 11px 'Nunito', sans-serif"; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillStyle = '#fff'; ctx.font = "800 11px 'Inter', sans-serif"; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       const paid = RECIPES[c.recipeId].price + (c.drinkDelivered && c.drinkId ? DRINKS[c.drinkId].price : 0);
       const tip = c.tipEligible ? Math.round(paid * 20) / 100 : 0;
       ctx.fillText('$' + (paid + tip).toFixed(tip ? 2 : 0), c.x, fy);
@@ -1275,30 +1299,30 @@
   }
   function drawHUD() {
     ctx.fillStyle = 'rgba(26,20,16,0.82)'; roundRect(12, 12, 230, 34, 8); ctx.fill();
-    ctx.fillStyle = C.textInv; ctx.font = "700 17px 'Fredoka', sans-serif"; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = C.textInv; ctx.font = "700 17px 'Barlow Condensed', sans-serif"; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
     ctx.fillText('you are not pizza', 24, 29);
     ctx.fillStyle = 'rgba(26,20,16,0.82)'; roundRect(W - 138, 12, 126, 34, 8); ctx.fill();
-    ctx.fillStyle = '#ffd9a0'; ctx.font = "800 18px 'Nunito', sans-serif"; ctx.textAlign = 'right';
+    ctx.fillStyle = '#ffd9a0'; ctx.font = "800 18px 'Inter', sans-serif"; ctx.textAlign = 'right';
     ctx.fillText('$' + state.cash, W - 24, 29);
     const remaining = Math.max(0, shift.orderCloseAt - shift.elapsed);
     const minutes = Math.floor(remaining / 60);
     const seconds = Math.floor(remaining % 60).toString().padStart(2, '0');
     ctx.fillStyle = 'rgba(26,20,16,0.82)'; roundRect(12, 54, 230, 30, 8); ctx.fill();
-    ctx.fillStyle = C.textInv; ctx.font = "700 13px 'Nunito', sans-serif"; ctx.textAlign = 'left';
+    ctx.fillStyle = C.textInv; ctx.font = "700 13px 'Inter', sans-serif"; ctx.textAlign = 'left';
     ctx.fillText('Day ' + shift.day + ' - ' + shift.phase.toUpperCase(), 24, 69);
     ctx.textAlign = 'right';
     ctx.fillText(shift.elapsed < shift.orderCloseAt ? minutes + ':' + seconds : 'Finish orders', 230, 69);
     const waiting = state.customers.filter((c) => c.state === 'waiting').length;
     if (waiting > 0) {
-      ctx.fillStyle = 'rgba(26,20,16,0.82)'; roundRect(W / 2 - 56, 12, 112, 34, 8); ctx.fill();
-      ctx.fillStyle = C.textInv; ctx.font = "700 14px 'Nunito', sans-serif"; ctx.textAlign = 'center';
-      ctx.fillText('Orders: ' + waiting, W / 2, 29);
+      ctx.fillStyle = 'rgba(26,20,16,0.82)'; roundRect(W / 2 - 56, 54, 112, 30, 8); ctx.fill();
+      ctx.fillStyle = C.textInv; ctx.font = "700 13px 'Inter', sans-serif"; ctx.textAlign = 'center';
+      ctx.fillText('Orders: ' + waiting, W / 2, 69);
     }
   }
   function drawContext() {
     const c = getContext(); if (!c) return;
     const p = state.player, y = p.y - 50;
-    ctx.font = "800 13px 'Nunito', sans-serif"; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.font = "800 13px 'Inter', sans-serif"; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     const w = ctx.measureText(c.text).width + 22;
     ctx.fillStyle = c.ok === false ? 'rgba(60,40,24,0.6)' : 'rgba(124,179,66,0.92)'; roundRect(p.x - w / 2, y - 11, w, 22, 7); ctx.fill();
     ctx.fillStyle = c.ok === false ? C.dim : C.textInv; ctx.fillText(c.text, p.x, y);
