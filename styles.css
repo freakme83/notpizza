@@ -218,3 +218,129 @@ canvas#game {
     padding: 6px 10px;
   }
 }
+
+
+#shiftReport {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  color: #fff7ec;
+  background: rgba(18, 12, 8, 0.88);
+  overflow-y: auto;
+}
+
+#shiftReport.hidden { display: none; }
+
+.report-card {
+  width: min(720px, 100%);
+  max-height: 100%;
+  padding: 24px;
+  border: 1px solid rgba(255, 217, 160, 0.28);
+  border-radius: 18px;
+  background: #2a1f17;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+  overflow-y: auto;
+}
+
+.report-card .eyebrow {
+  color: #c9a987;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+}
+
+.report-card h2 {
+  margin: 4px 0 14px;
+  color: #ffd9a0;
+  font: 700 clamp(1.7rem, 5vw, 2.7rem) 'Fredoka', sans-serif;
+}
+
+.report-card h3 {
+  margin: 18px 0 8px;
+  color: #ffd9a0;
+  font: 600 1rem 'Fredoka', sans-serif;
+}
+
+.report-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.report-stats div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.055);
+}
+
+.report-stats span,
+.report-note,
+.option-card span {
+  color: #c9a987;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.report-stats strong {
+  color: #fff7ec;
+  font-size: 1.15rem;
+}
+
+.report-options {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+
+.recipe-options {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.option-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 58px;
+  padding: 11px;
+  border: 1px solid rgba(255, 217, 160, 0.22);
+  border-radius: 10px;
+  color: #fff7ec;
+  background: #3b2d23;
+  font: 800 0.82rem 'Nunito', sans-serif;
+  cursor: pointer;
+}
+
+.option-card:hover:not(:disabled),
+.option-card.selected {
+  border-color: #ffd9a0;
+  background: #554032;
+}
+
+.option-card.selected { box-shadow: inset 0 0 0 1px #ffd9a0; }
+.option-card.purchased { border-color: #7cb342; }
+.option-card:disabled { cursor: not-allowed; opacity: 0.48; }
+
+.primary-action {
+  width: 100%;
+  margin-top: 18px;
+  padding: 11px 16px;
+  border: 0;
+  border-radius: 999px;
+  color: #1a1410;
+  background: #ffd9a0;
+  font: 800 0.95rem 'Nunito', sans-serif;
+  cursor: pointer;
+}
+
+@media (max-width: 620px) {
+  .report-stats { grid-template-columns: repeat(2, 1fr); }
+  .report-options,
+  .recipe-options { grid-template-columns: 1fr; }
+  .report-card { padding: 18px; }
+}
