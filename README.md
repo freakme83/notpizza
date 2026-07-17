@@ -81,3 +81,14 @@ The permanent Soda Cabinet upgrade costs $150. Once installed, each new customer
 Drink requests do not affect patience or pizza service. A drink can be delivered while the customer is waiting for or eating their pizza. If it is not delivered before the meal ends, the request is cancelled and produces no drink revenue.
 
 Regular waiters prioritize pizza, then trash, then drinks. A $30 drinks runner can also be hired to handle only drink pickup and delivery.
+
+
+## Service overrides, waste, tips, and host
+
+The player may take over pizza, oven, or drink tasks already assigned to a waiter. The waiter immediately releases that claim and chooses the next available job.
+
+Unneeded carried items can be discarded at the trash bin. Discarding a drink costs $1 and discarding a pizza costs $3. Waiters also discard obsolete items, but re-check demand while walking to the bin and resume delivery if a matching request appears.
+
+A customer's first pizza or drink service within 15 seconds earns a 20% tip on the final delivered order. A $40 host can be hired for the current shift; customers arriving while the host is active receive 25% more patience.
+
+Departing customers show a mood marker: green for service before the patience bar turned red, yellow for later successful service, and red for customers who left unserved.
