@@ -292,6 +292,34 @@ canvas#game {
   font-size: 1.15rem;
 }
 
+.shop-budget {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 217, 160, 0.28);
+  border-radius: 12px;
+  background: rgba(255, 217, 160, 0.08);
+}
+
+.shop-budget div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.shop-budget span {
+  color: #c9a987;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.shop-budget strong {
+  color: #fff7ec;
+  font-size: 1rem;
+}
+
 .report-options {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
@@ -340,6 +368,7 @@ canvas#game {
 
 @media (max-width: 620px) {
   .report-stats { grid-template-columns: repeat(2, 1fr); }
+  .shop-budget { grid-template-columns: 1fr; }
   .report-options,
   .recipe-options { grid-template-columns: 1fr; }
   .report-card { padding: 18px; }
