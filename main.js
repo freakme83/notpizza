@@ -22,6 +22,7 @@
   const shiftReport = document.getElementById('shiftReport');
   const reportTitle = document.getElementById('reportTitle');
   const reportStats = document.getElementById('reportStats');
+  const shopBudget = document.getElementById('shopBudget');
   const doughUpgradeBtn = document.getElementById('doughUpgrade');
   const ovenUpgradeBtn = document.getElementById('ovenUpgrade');
   const sodaUpgradeBtn = document.getElementById('sodaUpgrade');
@@ -107,7 +108,7 @@
   let waiterSeq = 0, chefSeq = 0;
   const state = {
     cash: 0, served: 0,
-    player: { x: 480, y: 500, r: 15, speed: 195, pizzas: [null, null], drink: null, trash: null, action: null, dir: 1, walk: 0 },
+    player: { x: 480, y: 500, r: 15, speed: 195, pizzas: [null, null], drink: null, trash: [null, null], action: null, dir: 1, walk: 0 },
     customers: [], waiters: [], chefs: [], trash: [],
     spawnTimer: 3.5, time: 0,
   };
@@ -117,7 +118,7 @@
   };
   const shift = {
     day: 1, elapsed: 0, orderCloseAt: 270, duration: 300,
-    phase: 'open', showingReport: false, recipeUnlockUsed: false, stats: null,
+    phase: 'open', showingReport: false, recipeUnlockUsed: false, shoppingStartCash: 0, stats: null,
   };
   const freshShiftStats = () => ({ revenue: 0, tips: 0, wasteCosts: 0, staffCosts: 0, served: 0, lost: 0, totalWait: 0, dineIn: 0, takeaway: 0 });
   shift.stats = freshShiftStats();
@@ -136,8 +137,13 @@
     }) || null;
   };
   const pizzaRecipeId = (pz) => pz && (pz.recipeId || recipeForPizza(pz));
-  const kneadDuration = () => BASE_KNEAD_DUR * (progress.doughLevel >= 2 ? 0.8 : 1);
-  const bakeDuration = () => BASE_BAKE_DUR * (progress.ovenLevel >= 2 ? 0.8 : 1);
+  const MAX_UPGRADE_LEVEL = 5;
+  const DOUGH_UPGRADE_COSTS = { 2: 50, 3: 80, 4: 130, 5: 205 };
+  const OVEN_UPGRADE_COSTS = { 2: 70, 3: 110, 4: 180, 5: 285 };
+  const speedMultiplier = (level) => 1 + Math.max(0, level - 1) * 0.2;
+  const kneadDuration = () => BASE_KNEAD_DUR / speedMultiplier(progress.doughLevel);
+  const bakeDuration = () => BASE_BAKE_DUR / speedMultiplier(progress.ovenLevel);
+  const money = (value) => String.fromCharCode(36) + Math.round(value);
 
   /* ---------- input ---------- */
   const Input = { keys: {}, pressed: {} };
@@ -322,10 +328,10 @@
     if (waiter.state !== 'leave') waiter.state = 'seek';
   }
 
-  function nearestTrash(x, y, range) {
+  function nearestTrash(x, y, range, includeClaimed = false) {
     let best = null, bd = range;
     for (const t of state.trash) {
-      if (t.claimedBy !== null) continue;
+      if (!includeClaimed && t.claimedBy !== null) continue;
       const d = dist(x, y, t.x, t.y);
       if (d < bd) { bd = d; best = t; }
     }
@@ -362,12 +368,15 @@
       const drinkCustomer = nearestDrinkCustomer(p.x, p.y, DELIVER_RADIUS, p.drink.id, null, true);
       if (drinkCustomer) return { kind: 'deliver-drink', ok: true, text: 'E: Deliver ' + DRINKS[p.drink.id].name, target: drinkCustomer };
     }
-    if (inBinRange(p) && (p.trash || p.drink || p.pizzas.some(Boolean))) {
-      const item = p.trash ? 'trash' : p.drink ? 'drink' : 'pizza';
-      const loss = item === 'drink' ? 1 : item === 'pizza' ? 3 : 0;
-      return { kind: 'discard-held', ok: true, text: 'E: Discard ' + item + (loss ? ' (-$' + loss + ')' : ''), item };
+    if (inBinRange(p) && (p.drink || p.pizzas.some(Boolean))) {
+      const item = p.drink ? 'drink' : 'pizza';
+      const loss = item === 'drink' ? 1 : 3;
+      return { kind: 'discard-held', ok: true, text: 'E: Discard ' + item + ' (-' + money(loss) + ')', item };
     }
-    if (!p.trash) { const t = nearestTrash(p.x, p.y, 56); if (t) return { kind: 'pickup', ok: true, text: 'E: Pick up trash', target: t }; }
+    if (p.trash.some((item) => !item)) {
+      const t = nearestTrash(p.x, p.y, 56, true);
+      if (t) return { kind: 'pickup', ok: true, text: 'E: Pick up trash', target: t };
+    }
     if (inSodaRange(p)) {
       return p.drink
         ? { kind: 'drink-menu', ok: false, text: 'Already carrying ' + DRINKS[p.drink.id].name }
@@ -380,7 +389,10 @@
     }
     const pr = prep();
     if (inStationRange(p, pr)) {
-      return { kind: 'prep-menu', target: pr, ok: true, text: 'E: Choose ingredient' };
+      const r = prepRequirement(p.pizzas);
+      if (r.ok && !r.make) return Object.assign({ kind: 'prep-step', target: pr }, r, { text: 'E: ' + r.action });
+      if (firstFreeHand() >= 0) return { kind: 'prep-menu', target: pr, ok: true, text: 'E: Start pizza' };
+      return { kind: 'prep-step', target: pr, ok: false, text: r.hint || 'Hands full' };
     }
     return null;
   }
@@ -459,6 +471,9 @@
     const c = getContext();
     if (!c || c.ok === false) return;
     if (c.kind === 'prep-menu') toggleIngredientDropdown();
+    else if (c.kind === 'prep-step') {
+      p.action = { label: c.action, duration: c.dur, elapsed: 0, onComplete: () => applyPrep(c) };
+    }
     else if (c.kind === 'oven') ovenInteract(c);
     else if (c.kind === 'deliver') deliver(c.target, c.hand);
     else if (c.kind === 'deliver-drink') {
@@ -466,8 +481,7 @@
     }
     else if (c.kind === 'drink-menu') toggleDrinkDropdown();
     else if (c.kind === 'discard-held') {
-      if (c.item === 'trash') p.trash = null;
-      else if (c.item === 'drink') { p.drink = null; state.cash -= 1; shift.stats.wasteCosts += 1; }
+      if (c.item === 'drink') { p.drink = null; state.cash -= 1; shift.stats.wasteCosts += 1; }
       else {
         const slot = p.pizzas.findIndex(Boolean);
         if (slot >= 0) p.pizzas[slot] = null;
@@ -475,41 +489,51 @@
       }
       SND.bin();
     }
-    else if (c.kind === 'pickup') { if (c.target) { p.trash = { t: 'trash' }; const i = state.trash.indexOf(c.target); if (i >= 0) state.trash.splice(i, 1); SND.done(); } }
-  }
-  function prepClickIngredient(ing) {
-    const p = state.player;
-    if (p.action) return;
-    if (!inStationRange(p, prep())) return;
-    if (ing.isBase) {
-      const free = firstFreeHand();
-      if (free >= 0) p.action = { label: 'Knead dough', duration: kneadDuration(), elapsed: 0, onComplete: () => { p.pizzas[free] = newPizza(ing.id); SND.done(); } };
-      return;
-    }
-    for (let i = 0; i < p.pizzas.length; i++) {
-      if (canAddIngredient(p.pizzas[i], ing)) {
-        const idx = i, id = ing.id, nm = ing.name, dur = ing.dur;
-        p.action = { label: 'Add ' + nm, duration: dur, elapsed: 0, onComplete: () => { if (p.pizzas[idx]) p.pizzas[idx].added.add(id); SND.done(); } };
-        return;
+    else if (c.kind === 'pickup') {
+      if (c.target) {
+        const slot = p.trash.findIndex((item) => !item);
+        if (slot >= 0) {
+          if (c.target.claimedBy !== null) {
+            const waiter = state.waiters.find((candidate) => candidate.id === c.target.claimedBy);
+            if (waiter && waiter.targetTrash === c.target) { waiter.targetTrash = null; waiter.state = 'seek'; }
+          }
+          p.trash[slot] = { t: 'trash' };
+          const i = state.trash.indexOf(c.target);
+          if (i >= 0) state.trash.splice(i, 1);
+          SND.done();
+        }
       }
     }
+  }
+  function startPlayerPizza(recipeId) {
+    const p = state.player;
+    if (p.action || !inStationRange(p, prep())) return;
+    const free = firstFreeHand();
+    if (free < 0 || !RECIPES[recipeId] || !unlockedRecipeIds().includes(recipeId)) return;
+    const recipeName = RECIPES[recipeId].name;
+    p.action = {
+      label: 'Knead ' + recipeName,
+      duration: kneadDuration(),
+      elapsed: 0,
+      onComplete: () => { p.pizzas[free] = newPizza('dough', recipeId); SND.done(); }
+    };
   }
   const ingredientButtons = new Map();
   let ingredientMenuSignature = '';
 
-  function rebuildIngredientDropdown(ingredients) {
+  function rebuildIngredientDropdown(recipeIds) {
     ingredientOptions.innerHTML = '';
     ingredientButtons.clear();
-    for (const ing of ingredients) {
+    for (const recipeId of recipeIds) {
       const button = document.createElement('button');
       button.type = 'button';
-      button.textContent = ing.name;
+      button.textContent = RECIPES[recipeId].name;
       button.addEventListener('click', () => {
-        prepClickIngredient(ing);
+        startPlayerPizza(recipeId);
         ingredientOptions.classList.add('hidden');
         ingredientToggle.setAttribute('aria-expanded', 'false');
       });
-      ingredientButtons.set(ing.id, button);
+      ingredientButtons.set(recipeId, button);
       ingredientOptions.appendChild(button);
     }
   }
@@ -522,20 +546,17 @@
       ingredientToggle.setAttribute('aria-expanded', 'false');
     }
 
-    const ingredients = availableIngredients();
-    const signature = ingredients.map((ingredient) => ingredient.id).join('|');
+    const recipeIds = unlockedRecipeIds();
+    const signature = recipeIds.join('|');
     if (signature !== ingredientMenuSignature) {
       ingredientMenuSignature = signature;
-      rebuildIngredientDropdown(ingredients);
+      rebuildIngredientDropdown(recipeIds);
     }
 
-    for (const ing of ingredients) {
-      const button = ingredientButtons.get(ing.id);
-      if (!button) continue;
-      const enabled = ing.isBase
-        ? firstFreeHand() >= 0
-        : state.player.pizzas.some((pizza) => canAddIngredient(pizza, ing));
-      button.disabled = !enabled || !!state.player.action;
+    const canStart = firstFreeHand() >= 0 && !state.player.action;
+    for (const recipeId of recipeIds) {
+      const button = ingredientButtons.get(recipeId);
+      if (button) button.disabled = !canStart;
     }
   }
   function toggleIngredientDropdown() {
@@ -635,7 +656,7 @@
       c.payTimer -= dt;
       if (c.payTimer <= 0) {
         const salePrice = RECIPES[c.recipeId].price + (c.drinkDelivered && c.drinkId ? DRINKS[c.drinkId].price : 0);
-        const tip = c.tipEligible ? Math.round(salePrice * 20) / 100 : 0;
+        const tip = c.tipEligible ? Math.round(salePrice * 0.2) : 0;
         state.cash += salePrice + tip; state.served++; shift.stats.revenue += salePrice; shift.stats.tips += tip; shift.stats.served++;
         shift.stats.totalWait += c.waitElapsed || 0;
         if (c.takeaway) shift.stats.takeaway++; else shift.stats.dineIn++;
@@ -724,6 +745,7 @@
   function pickWaiterJob(w, dt) {
     const drinkHand = carriedDrinkHand(w);
     if (!w.drinksOnly && carriedPizzaHand(w) >= 0) { w.state = 'tocust'; return; }
+    if (!w.drinksOnly && carriedTrashHand(w) >= 0 && hasFreeHand(w) >= 0 && state.trash.some((t) => t.claimedBy === null)) { w.state = 'totrash'; return; }
     if (!w.drinksOnly && carriedTrashHand(w) >= 0) { w.state = 'tobin'; return; }
     if (!w.drinksOnly && hasFreeHand(w) >= 0 && state.trash.some((t) => t.claimedBy === null)) { w.state = 'totrash'; return; }
     if (drinkHand >= 0) { w.state = 'todrinkcust'; return; }
@@ -988,6 +1010,10 @@
       p.x = nx; p.y = ny; p.walk += dt * 10;
       if (Math.floor(p.walk) !== Math.floor(p.walk - dt * 10)) SND.step();
     }
+    if (inBinRange(p) && p.trash.some(Boolean)) {
+      p.trash = [null, null];
+      SND.bin();
+    }
     if (Input.pressed['KeyE'] || Input.pressed['Space']) tryInteract();
   }
 
@@ -1035,7 +1061,7 @@
     // ribs
     ctx.strokeStyle = 'rgba(0,0,0,0.25)'; ctx.lineWidth = 1.5;
     for (let i = -1; i <= 1; i++) { ctx.beginPath(); ctx.moveTo(BIN.x - 11, BIN.y - 4 + i * 7); ctx.lineTo(BIN.x + 11, BIN.y - 4 + i * 7); ctx.stroke(); }
-    ctx.fillStyle = C.text; ctx.font = "700 9px 'Nunito', sans-serif"; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = C.text; ctx.font = "700 9px 'Inter', sans-serif"; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText('Trash', BIN.x, BIN.y + 22);
   }
   function drawTrashPiles() {
@@ -1052,7 +1078,7 @@
     ctx.fillStyle = C.counterTop; roundRect(x, y, s.w, 22, 10); ctx.fill(); ctx.fillRect(x, y + 8, s.w, 14);
     ctx.fillStyle = s.id === 'oven' ? C.oven : '#f0e3c0';
     roundRect(x + 10, y + 28, s.w - 20, s.h - 38, 8); ctx.fill();
-    ctx.fillStyle = C.text; ctx.font = "700 15px 'Nunito', sans-serif"; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = C.text; ctx.font = "700 15px 'Inter', sans-serif"; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText(s.label, s.cx, y + 14);
     if (s.id === 'prep') {
       const atPrep = inStationRange(state.player, s);
@@ -1100,7 +1126,7 @@
   function drawPickup() {
     ctx.fillStyle = C.counter; roundRect(PICKUP.x, PICKUP.y, PICKUP.w, PICKUP.h, 8); ctx.fill();
     ctx.fillStyle = C.counterTop; roundRect(PICKUP.x, PICKUP.y, PICKUP.w, 10, 8); ctx.fill();
-    ctx.fillStyle = C.text; ctx.font = "700 12px 'Nunito', sans-serif"; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = C.text; ctx.font = "700 12px 'Inter', sans-serif"; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText('Pickup', PICKUP.x + PICKUP.w / 2, PICKUP.y + PICKUP.h / 2 + 2);
   }
   function drawSodaCabinet() {
@@ -1108,7 +1134,7 @@
     ctx.fillStyle = '#35434a'; roundRect(SODA.x, SODA.y, SODA.w, SODA.h, 8); ctx.fill();
     ctx.fillStyle = '#8ed0e8'; roundRect(SODA.x + 7, SODA.y + 8, SODA.w - 14, 34, 5); ctx.fill();
     ctx.fillStyle = '#1f292e'; roundRect(SODA.x + 7, SODA.y + 48, SODA.w - 14, 16, 4); ctx.fill();
-    ctx.fillStyle = C.textInv; ctx.font = "700 9px 'Nunito', sans-serif"; ctx.textAlign = 'center';
+    ctx.fillStyle = C.textInv; ctx.font = "700 9px 'Inter', sans-serif"; ctx.textAlign = 'center';
     ctx.fillText('DRINKS', SODA.x + SODA.w / 2, SODA.y + 58);
   }
   function drawDrinkIcon(id, x, y) {
@@ -1164,13 +1190,17 @@
     ctx.fillStyle = C.apron; roundRect(p.x - 6, p.y + 1, 12, 11, 3); ctx.fill();
     const carried = p.pizzas.filter(Boolean);
     carried.forEach((pz, i) => { const off = carried.length === 1 ? 0 : i === 0 ? -9 : 9; drawPizza(p.x + p.dir * 4 + off, p.y - 16, pizzaStage(pz), 0.85); });
-    if (p.trash) drawTrashIcon(p.x - 12, p.y - 14);
+    const carriedTrash = p.trash.filter(Boolean);
+    carriedTrash.forEach((item, i) => {
+      const offset = carriedTrash.length === 1 ? -12 : i === 0 ? -14 : 2;
+      drawTrashIcon(p.x + offset, p.y - 14);
+    });
     if (p.drink) drawDrinkIcon(p.drink.id, p.x + 12, p.y - 16);
     if (p.action) {
       const pct = p.action.elapsed / p.action.duration, bw = 52, bx = p.x - bw / 2, by = p.y - 44;
       ctx.fillStyle = 'rgba(0,0,0,0.55)'; roundRect(bx - 2, by - 2, bw + 4, 12, 6); ctx.fill();
       ctx.fillStyle = C.good; roundRect(bx, by, bw * pct, 8, 4); ctx.fill();
-      ctx.font = "700 11px 'Nunito', sans-serif"; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.font = "700 11px 'Inter', sans-serif"; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       const lw = ctx.measureText(p.action.label).width + 14, ly = by - 11;
       ctx.fillStyle = 'rgba(36,26,18,0.92)'; roundRect(p.x - lw / 2, ly - 8, lw, 16, 8); ctx.fill();
       ctx.fillStyle = C.textInv; ctx.fillText(p.action.label, p.x, ly);
@@ -1179,7 +1209,7 @@
   function drawHost() {
     if (!hostActive) return;
     drawPerson(480, 578, '#d87845', { bob: state.time * 2 });
-    ctx.fillStyle = '#fff7ec'; ctx.font = "800 9px 'Nunito', sans-serif"; ctx.textAlign = 'center';
+    ctx.fillStyle = '#fff7ec'; ctx.font = "800 9px 'Inter', sans-serif"; ctx.textAlign = 'center';
     ctx.fillText('HOST', 480, 600);
   }
   function drawChef(chef) {
@@ -1196,7 +1226,7 @@
       const pct = chef.action.elapsed / chef.action.duration, bw = 52, bx = chef.x - bw / 2, by = chef.y - 44;
       ctx.fillStyle = 'rgba(0,0,0,0.55)'; roundRect(bx - 2, by - 2, bw + 4, 12, 6); ctx.fill();
       ctx.fillStyle = C.good; roundRect(bx, by, bw * pct, 8, 4); ctx.fill();
-      ctx.font = "700 11px 'Nunito', sans-serif"; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.font = "700 11px 'Inter', sans-serif"; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       const lw = ctx.measureText(chef.action.label).width + 14, ly = by - 11;
       ctx.fillStyle = 'rgba(36,26,18,0.92)'; roundRect(chef.x - lw / 2, ly - 8, lw, 16, 8); ctx.fill();
       ctx.fillStyle = C.textInv; ctx.fillText(chef.action.label, chef.x, ly);
@@ -1222,6 +1252,31 @@
     const pct = clamp(w.timer / WAITER_DURATION, 0, 1), bw = 24, bx = w.x - bw / 2, by = w.y + 18;
     ctx.fillStyle = 'rgba(0,0,0,0.35)'; roundRect(bx, by, bw, 3, 2); ctx.fill();
     ctx.fillStyle = pct > 0.33 ? C.good : pct > 0.15 ? '#e0a93a' : C.bad; roundRect(bx, by, bw * pct, 3, 2); ctx.fill();
+
+    const taskLabels = {
+      tocust: 'Serve pizza',
+      tobin: 'Take trash out',
+      totrash: 'Clear table',
+      todrinkcust: 'Serve drink',
+      todrinkcabinet: 'Get drink',
+      discard: 'Discard item',
+      leave: 'Clocking out'
+    };
+    const task = taskLabels[w.state];
+    if (task) {
+      ctx.font = "700 9px 'Inter', sans-serif";
+      const bubbleW = ctx.measureText(task).width + 14;
+      const bubbleY = w.y - (carried.length ? 48 : 36);
+      ctx.fillStyle = 'rgba(255,250,239,0.96)';
+      roundRect(w.x - bubbleW / 2, bubbleY - 9, bubbleW, 18, 7); ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(w.x - 3, bubbleY + 8);
+      ctx.lineTo(w.x + 3, bubbleY + 8);
+      ctx.lineTo(w.x, bubbleY + 13);
+      ctx.closePath(); ctx.fill();
+      ctx.fillStyle = C.text; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(task, w.x, bubbleY);
+    }
   }
   function drawCustomer(c) {
     drawPerson(c.x, c.y, c.color, { bob: c.state === 'waiting' ? c.bob : (c.state === 'entering' || c.state === 'leaving' ? c.bob * 2 : 0) });
@@ -1230,7 +1285,7 @@
       const bx = c.x + off.x, by = c.y + off.y;
       const drinkText = c.drinkId && !c.drinkDelivered ? ' + ' + DRINKS[c.drinkId].name : '';
       const txt = RECIPES[c.recipeId].name + drinkText + (c.takeaway ? ' · to go' : '');
-      ctx.font = "800 10px 'Nunito', sans-serif"; const tw = ctx.measureText(txt).width + 14;
+      ctx.font = "800 10px 'Inter', sans-serif"; const tw = ctx.measureText(txt).width + 14;
       ctx.fillStyle = C.bubble; roundRect(bx - tw / 2, by - 11, tw, 20, 7); ctx.fill();
       ctx.beginPath();
       if (c.side === 'n') { ctx.moveTo(bx - 4, by + 8); ctx.lineTo(bx + 4, by + 8); ctx.lineTo(bx, by + 14); }
@@ -1244,7 +1299,7 @@
       ctx.fillStyle = 'rgba(0,0,0,0.3)'; roundRect(c.x - 14, ry, 28, 4, 2); ctx.fill();
       ctx.fillStyle = pct > 0.4 ? C.good : C.bad; roundRect(c.x - 14, ry, 28 * pct, 4, 2); ctx.fill();
     } else if (c.state === 'eating') {
-      ctx.fillStyle = C.good; ctx.font = "800 11px 'Nunito', sans-serif"; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillStyle = C.good; ctx.font = "800 11px 'Inter', sans-serif"; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillText('•••', c.x, c.y - 26);
     } else if (c.state === 'paying') {
       // floating green $ bill, rises + fades
@@ -1252,10 +1307,10 @@
       const fy = c.y - 24 - prog * 16;
       ctx.globalAlpha = 1 - prog * 0.7;
       ctx.fillStyle = C.money; roundRect(c.x - 9, fy - 7, 18, 14, 3); ctx.fill();
-      ctx.fillStyle = '#fff'; ctx.font = "800 11px 'Nunito', sans-serif"; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillStyle = '#fff'; ctx.font = "800 11px 'Inter', sans-serif"; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       const paid = RECIPES[c.recipeId].price + (c.drinkDelivered && c.drinkId ? DRINKS[c.drinkId].price : 0);
-      const tip = c.tipEligible ? Math.round(paid * 20) / 100 : 0;
-      ctx.fillText('$' + (paid + tip).toFixed(tip ? 2 : 0), c.x, fy);
+      const tip = c.tipEligible ? Math.round(paid * 0.2) : 0;
+      ctx.fillText(money(paid + tip), c.x, fy);
       ctx.globalAlpha = 1;
     } else if (c.state === 'leaving' && c.mood) {
       drawMoodFace(c.x, c.y - 31, c.mood);
@@ -1275,30 +1330,30 @@
   }
   function drawHUD() {
     ctx.fillStyle = 'rgba(26,20,16,0.82)'; roundRect(12, 12, 230, 34, 8); ctx.fill();
-    ctx.fillStyle = C.textInv; ctx.font = "700 17px 'Fredoka', sans-serif"; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = C.textInv; ctx.font = "700 17px 'Barlow Condensed', sans-serif"; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
     ctx.fillText('you are not pizza', 24, 29);
     ctx.fillStyle = 'rgba(26,20,16,0.82)'; roundRect(W - 138, 12, 126, 34, 8); ctx.fill();
-    ctx.fillStyle = '#ffd9a0'; ctx.font = "800 18px 'Nunito', sans-serif"; ctx.textAlign = 'right';
-    ctx.fillText('$' + state.cash, W - 24, 29);
+    ctx.fillStyle = '#ffd9a0'; ctx.font = "800 18px 'Inter', sans-serif"; ctx.textAlign = 'right';
+    ctx.fillText(money(state.cash), W - 24, 29);
     const remaining = Math.max(0, shift.orderCloseAt - shift.elapsed);
     const minutes = Math.floor(remaining / 60);
     const seconds = Math.floor(remaining % 60).toString().padStart(2, '0');
     ctx.fillStyle = 'rgba(26,20,16,0.82)'; roundRect(12, 54, 230, 30, 8); ctx.fill();
-    ctx.fillStyle = C.textInv; ctx.font = "700 13px 'Nunito', sans-serif"; ctx.textAlign = 'left';
+    ctx.fillStyle = C.textInv; ctx.font = "700 13px 'Inter', sans-serif"; ctx.textAlign = 'left';
     ctx.fillText('Day ' + shift.day + ' - ' + shift.phase.toUpperCase(), 24, 69);
     ctx.textAlign = 'right';
     ctx.fillText(shift.elapsed < shift.orderCloseAt ? minutes + ':' + seconds : 'Finish orders', 230, 69);
     const waiting = state.customers.filter((c) => c.state === 'waiting').length;
     if (waiting > 0) {
-      ctx.fillStyle = 'rgba(26,20,16,0.82)'; roundRect(W / 2 - 56, 12, 112, 34, 8); ctx.fill();
-      ctx.fillStyle = C.textInv; ctx.font = "700 14px 'Nunito', sans-serif"; ctx.textAlign = 'center';
-      ctx.fillText('Orders: ' + waiting, W / 2, 29);
+      ctx.fillStyle = 'rgba(26,20,16,0.82)'; roundRect(W / 2 - 56, 54, 112, 30, 8); ctx.fill();
+      ctx.fillStyle = C.textInv; ctx.font = "700 13px 'Inter', sans-serif"; ctx.textAlign = 'center';
+      ctx.fillText('Orders: ' + waiting, W / 2, 69);
     }
   }
   function drawContext() {
     const c = getContext(); if (!c) return;
     const p = state.player, y = p.y - 50;
-    ctx.font = "800 13px 'Nunito', sans-serif"; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.font = "800 13px 'Inter', sans-serif"; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     const w = ctx.measureText(c.text).width + 22;
     ctx.fillStyle = c.ok === false ? 'rgba(60,40,24,0.6)' : 'rgba(124,179,66,0.92)'; roundRect(p.x - w / 2, y - 11, w, 22, 7); ctx.fill();
     ctx.fillStyle = c.ok === false ? C.dim : C.textInv; ctx.fillText(c.text, p.x, y);
@@ -1351,29 +1406,39 @@
     hireMenu.classList.add('hidden'); hireWrap.classList.add('paused');
     reportTitle.textContent = 'Day ' + shift.day + ' report';
     const avgWait = shift.stats.served ? Math.round(shift.stats.totalWait / shift.stats.served) : 0;
-    const net = shift.stats.revenue + shift.stats.tips - shift.stats.staffCosts - shift.stats.wasteCosts;
+    const net = Math.round(shift.stats.revenue + shift.stats.tips - shift.stats.staffCosts - shift.stats.wasteCosts);
     reportStats.innerHTML =
       '<div><span>Customers served</span><strong>' + shift.stats.served + '</strong></div>' +
       '<div><span>Customers lost</span><strong>' + shift.stats.lost + '</strong></div>' +
-      '<div><span>Revenue</span><strong>$' + shift.stats.revenue + '</strong></div>' +
-      '<div><span>Staff costs</span><strong>-$' + shift.stats.staffCosts + '</strong></div>' +
-      '<div><span>Waste</span><strong>-$' + shift.stats.wasteCosts + '</strong></div>' +
-      '<div><span>Tips</span><strong>$' + shift.stats.tips.toFixed(2) + '</strong></div>' +
-      '<div><span>Net shift result</span><strong>' + (net < 0 ? '-$' + Math.abs(net) : '$' + net) + '</strong></div>' +
+      '<div><span>Revenue</span><strong>' + money(shift.stats.revenue) + '</strong></div>' +
+      '<div><span>Staff costs</span><strong>-' + money(shift.stats.staffCosts) + '</strong></div>' +
+      '<div><span>Waste</span><strong>-' + money(shift.stats.wasteCosts) + '</strong></div>' +
+      '<div><span>Tips</span><strong>' + money(shift.stats.tips) + '</strong></div>' +
+      '<div><span>Net shift result</span><strong>' + (net < 0 ? '-' + money(Math.abs(net)) : money(net)) + '</strong></div>' +
       '<div><span>Average wait</span><strong>' + avgWait + 's</strong></div>';
-    shift.recipeUnlockUsed = false; refreshReportOptions();
+    shift.recipeUnlockUsed = false;
+    shift.shoppingStartCash = Math.round(state.cash);
+    refreshReportOptions();
     nextShiftBtn.textContent = 'Start day ' + (shift.day + 1);
     shiftReport.classList.remove('hidden');
   }
   function refreshReportOptions() {
-    doughUpgradeBtn.disabled = progress.doughLevel >= 2 || state.cash < 50;
-    ovenUpgradeBtn.disabled = progress.ovenLevel >= 2 || state.cash < 70;
+    const doughNext = progress.doughLevel + 1;
+    const ovenNext = progress.ovenLevel + 1;
+    const doughCost = DOUGH_UPGRADE_COSTS[doughNext] || 0;
+    const ovenCost = OVEN_UPGRADE_COSTS[ovenNext] || 0;
+    const doughMaxed = progress.doughLevel >= MAX_UPGRADE_LEVEL;
+    const ovenMaxed = progress.ovenLevel >= MAX_UPGRADE_LEVEL;
+    doughUpgradeBtn.disabled = doughMaxed || state.cash < doughCost;
+    ovenUpgradeBtn.disabled = ovenMaxed || state.cash < ovenCost;
     sodaUpgradeBtn.disabled = progress.sodaCabinet || state.cash < 150;
-    doughUpgradeBtn.classList.toggle('purchased', progress.doughLevel >= 2);
-    ovenUpgradeBtn.classList.toggle('purchased', progress.ovenLevel >= 2);
+    doughUpgradeBtn.classList.toggle('purchased', doughMaxed);
+    ovenUpgradeBtn.classList.toggle('purchased', ovenMaxed);
     sodaUpgradeBtn.classList.toggle('purchased', progress.sodaCabinet);
-    doughUpgradeBtn.querySelector('span').textContent = progress.doughLevel >= 2 ? 'Purchased - 20% faster' : '20% faster kneading - $50';
-    ovenUpgradeBtn.querySelector('span').textContent = progress.ovenLevel >= 2 ? 'Purchased - 20% faster' : '20% faster baking - $70';
+    doughUpgradeBtn.querySelector('strong').textContent = 'Faster dough · Level ' + progress.doughLevel;
+    ovenUpgradeBtn.querySelector('strong').textContent = 'Faster oven · Level ' + progress.ovenLevel;
+    doughUpgradeBtn.querySelector('span').textContent = doughMaxed ? 'Maximum level · +80% speed' : 'Upgrade to Level ' + doughNext + ' · +20% speed · ' + money(doughCost);
+    ovenUpgradeBtn.querySelector('span').textContent = ovenMaxed ? 'Maximum level · +80% speed' : 'Upgrade to Level ' + ovenNext + ' · +20% speed · ' + money(ovenCost);
     sodaUpgradeBtn.querySelector('span').textContent = progress.sodaCabinet ? 'Purchased · Coke, Water, Dew' : 'Permanent drinks service · $150';
     recipeButtons.forEach((button) => {
       const id = button.dataset.recipe, unlocked = progress.unlockedRecipes.has(id);
@@ -1381,14 +1446,23 @@
       button.classList.toggle('purchased', unlocked);
       button.textContent = unlocked ? RECIPES[id].name + ' · Unlocked' : 'Unlock ' + RECIPES[id].name + ' · $60';
     });
+    const spent = Math.max(0, shift.shoppingStartCash - Math.round(state.cash));
+    shopBudget.innerHTML =
+      '<div><span>Shopping budget</span><strong>' + money(shift.shoppingStartCash) + '</strong></div>' +
+      '<div><span>Spent</span><strong>-' + money(spent) + '</strong></div>' +
+      '<div><span>Cash remaining</span><strong>' + money(state.cash) + '</strong></div>';
   }
   doughUpgradeBtn.addEventListener('click', () => {
-    if (progress.doughLevel >= 2 || state.cash < 50) return;
-    state.cash -= 50; progress.doughLevel = 2; refreshReportOptions();
+    const level = progress.doughLevel + 1;
+    const cost = DOUGH_UPGRADE_COSTS[level];
+    if (!cost || state.cash < cost) return;
+    state.cash -= cost; progress.doughLevel = level; refreshReportOptions();
   });
   ovenUpgradeBtn.addEventListener('click', () => {
-    if (progress.ovenLevel >= 2 || state.cash < 70) return;
-    state.cash -= 70; progress.ovenLevel = 2; refreshReportOptions();
+    const level = progress.ovenLevel + 1;
+    const cost = OVEN_UPGRADE_COSTS[level];
+    if (!cost || state.cash < cost) return;
+    state.cash -= cost; progress.ovenLevel = level; refreshReportOptions();
   });
   sodaUpgradeBtn.addEventListener('click', () => {
     if (progress.sodaCabinet || state.cash < 150) return;
@@ -1406,7 +1480,7 @@
   }));
   function resetRestaurantForNextShift() {
     state.customers = []; state.waiters = []; state.chefs = []; state.trash = []; state.spawnTimer = 2.5; hostActive = false;
-    state.player.x = 480; state.player.y = 500; state.player.pizzas = [null, null]; state.player.drink = null; state.player.trash = null; state.player.action = null;
+    state.player.x = 480; state.player.y = 500; state.player.pizzas = [null, null]; state.player.drink = null; state.player.trash = [null, null]; state.player.action = null;
     for (const slot of oven().slots) { slot.pizza = null; slot.timer = 0; slot.baking = false; slot.done = false; slot.claimedBy = null; }
     for (const table of TABLES) for (const seat of table.seats) { seat.occupied = false; seat.cust = null; }
     for (const spot of TAKEAWAY_SPOTS) { spot.occupied = false; spot.cust = null; }
