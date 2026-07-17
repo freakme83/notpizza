@@ -12,6 +12,10 @@
   const pauseBtn = document.getElementById('pauseBtn');
   const restartBtn = document.getElementById('restartBtn');
   const pauseOverlay = document.getElementById('pauseOverlay');
+  const pauseRecipes = document.getElementById('pauseRecipes');
+  const ingredientDropdown = document.getElementById('ingredientDropdown');
+  const ingredientToggle = document.getElementById('ingredientToggle');
+  const ingredientOptions = document.getElementById('ingredientOptions');
   const shiftReport = document.getElementById('shiftReport');
   const reportTitle = document.getElementById('reportTitle');
   const reportStats = document.getElementById('reportStats');
@@ -48,9 +52,9 @@
   ];
   const BASE_KNEAD_DUR = 3.5, SAUCE_DUR = 1.5, CHEESE_DUR = 1.5, TOPPING_DUR = 1.2, BASE_BAKE_DUR = 4.5;
   const RECIPES = {
-    margherita: { name: 'Margherita', ingredients: ['dough', 'sauce', 'cheese'] },
-    pepperoni: { name: 'Pepperoni', ingredients: ['dough', 'sauce', 'cheese', 'pepperoni'] },
-    funghi: { name: 'Funghi', ingredients: ['dough', 'sauce', 'cheese', 'mushroom'] },
+    margherita: { name: 'Margherita', price: 9, ingredients: ['dough', 'sauce', 'cheese'] },
+    pepperoni: { name: 'Pepperoni', price: 12, ingredients: ['dough', 'sauce', 'cheese', 'pepperoni'] },
+    funghi: { name: 'Funghi', price: 12, ingredients: ['dough', 'sauce', 'cheese', 'mushroom'] },
   };
 
   /* ---------- extensible ingredient system ---------- */
@@ -100,7 +104,6 @@
   const progress = {
     doughLevel: 1, ovenLevel: 1,
     unlockedRecipes: new Set(['margherita']),
-    selectedRecipe: 'margherita',
   };
   const shift = {
     day: 1, elapsed: 0, orderCloseAt: 270, duration: 300,
@@ -108,8 +111,20 @@
   };
   const freshShiftStats = () => ({ revenue: 0, staffCosts: 0, served: 0, lost: 0, totalWait: 0, dineIn: 0, takeaway: 0 });
   shift.stats = freshShiftStats();
-  const activeRecipe = () => RECIPES[progress.selectedRecipe];
-  const activeRecipeIds = () => activeRecipe().ingredients;
+  const unlockedRecipeIds = () => [...progress.unlockedRecipes];
+  const availableIngredients = () => {
+    const ids = new Set(unlockedRecipeIds().flatMap((id) => RECIPES[id].ingredients));
+    return INGREDIENTS.filter((ingredient) => ids.has(ingredient.id));
+  };
+  const recipeForPizza = (pz) => {
+    if (!pz) return null;
+    const ids = [...pz.added];
+    return unlockedRecipeIds().find((id) => {
+      const required = RECIPES[id].ingredients;
+      return required.length === ids.length && required.every((ingredient) => pz.added.has(ingredient));
+    }) || null;
+  };
+  const pizzaRecipeId = (pz) => pz && (pz.recipeId || recipeForPizza(pz));
   const kneadDuration = () => BASE_KNEAD_DUR * (progress.doughLevel >= 2 ? 0.8 : 1);
   const bakeDuration = () => BASE_BAKE_DUR * (progress.ovenLevel >= 2 ? 0.8 : 1);
 
@@ -128,6 +143,15 @@
     Input.keys[e.code] = true;
   });
   addEventListener('keyup', (e) => { Input.keys[e.code] = false; });
+  function clearHeldInput() {
+    Input.keys = {};
+    Input.pressed = {};
+  }
+  addEventListener('blur', clearHeldInput);
+  document.addEventListener('visibilitychange', () => {
+    clearHeldInput();
+    if (document.hidden && started && !paused && !shift.showingReport) setPaused(true);
+  });
 
   /* ---------- audio ---------- */
   let audioCtx = null;
@@ -157,12 +181,26 @@
   const prep = () => STATIONS.find((s) => s.id === 'prep');
 
   /* ---------- pizza model ---------- */
-  const newPizza = (base) => ({ added: new Set(base ? [base] : []), baked: false });
-  const canAddIngredient = (pz, ing) => pz && !pz.baked && !pz.added.has(ing.id) && ing.requires.every((r) => pz.added.has(r));
-  const pizzaReadyToBake = (pz) => pz && !pz.baked && activeRecipeIds().every((r) => pz.added.has(r));
+  const newPizza = (base, targetRecipeId = null) => ({ added: new Set(base ? [base] : []), baked: false, recipeId: null, targetRecipeId });
+  const canAddIngredient = (pz, ing) => {
+    if (!pz || pz.baked || pz.added.has(ing.id) || !ing.requires.every((r) => pz.added.has(r))) return false;
+    const next = new Set([...pz.added, ing.id]);
+    return unlockedRecipeIds().some((id) => {
+      const recipe = RECIPES[id].ingredients;
+      return [...next].every((ingredient) => recipe.includes(ingredient));
+    });
+  };
+  const pizzaReadyToBake = (pz) => {
+    if (!pz || pz.baked) return false;
+    if (!pz.targetRecipeId) return !!recipeForPizza(pz);
+    const target = RECIPES[pz.targetRecipeId].ingredients;
+    return target.length === pz.added.size && target.every((ingredient) => pz.added.has(ingredient));
+  };
   function pizzaStage(pz) {
     if (!pz) return null;
-    if (pz.baked) return 'baked';
+    if (pz.baked) return 'baked-' + (pizzaRecipeId(pz) || 'margherita');
+    if (pz.added.has('pepperoni')) return 'pepperoni';
+    if (pz.added.has('mushroom')) return 'mushroom';
     if (pz.added.has('cheese')) return 'cheese';
     if (pz.added.has('sauce')) return 'sauce';
     return 'dough';
@@ -170,7 +208,7 @@
 
   /* ---------- hand helpers ---------- */
   const firstFreeHand = () => state.player.pizzas.findIndex((x) => !x);
-  const firstCarriedBaked = () => state.player.pizzas.findIndex((x) => x && x.baked);
+  const firstCarriedBaked = (recipeId = null) => state.player.pizzas.findIndex((x) => x && x.baked && (!recipeId || pizzaRecipeId(x) === recipeId));
   const firstCarriedReady = () => state.player.pizzas.findIndex((x) => pizzaReadyToBake(x));
   const hasFreeHand = (w) => w.hands.findIndex((h) => !h);
   const carriedPizzaHand = (w) => w.hands.findIndex((h) => h && h.t === 'pizza');
@@ -186,7 +224,8 @@
 
   /* ---------- requirements (player) ---------- */
   function nextActionForPizza(pz) {
-    for (const id of activeRecipeIds()) {
+    const target = RECIPES[pz.targetRecipeId] || RECIPES.margherita;
+    for (const id of target.ingredients) {
       if (!pz.added.has(id)) {
         const ing = ING_MAP[id];
         if (ing.requires.every((r) => pz.added.has(r))) return { ing, action: 'Add ' + ing.name };
@@ -222,10 +261,10 @@
     return { ok: false, hint: 'need cheese' };
   }
 
-  function nearestWaiting(x, y, range) {
+  function nearestWaiting(x, y, range, recipeId = null) {
     let best = null, bd = range;
     for (const c of state.customers) {
-      if (c.state !== 'waiting' || c.claimedBy !== null) continue;
+      if (c.state !== 'waiting' || c.claimedBy !== null || (recipeId && c.recipeId !== recipeId)) continue;
       const d = dist(x, y, c.x, c.y);
       if (d < bd) { bd = d; best = c; }
     }
@@ -240,10 +279,10 @@
     }
     return best;
   }
-  function mostImpatientUnclaimed() {
+  function mostImpatientUnclaimed(recipeId = null) {
     let best = null;
     for (const c of state.customers) {
-      if (c.state !== 'waiting' || c.claimedBy !== null) continue;
+      if (c.state !== 'waiting' || c.claimedBy !== null || (recipeId && c.recipeId !== recipeId)) continue;
       if (!best || c.patience < best.patience) best = c;
     }
     return best;
@@ -261,9 +300,11 @@
   function getContext() {
     const p = state.player;
     if (p.action) return null;
-    if (firstCarriedBaked() >= 0) {
-      const c = nearestWaiting(p.x, p.y, DELIVER_RADIUS);
-      if (c) return { kind: 'deliver', ok: true, text: 'E: Deliver', target: c };
+    for (let hand = 0; hand < p.pizzas.length; hand++) {
+      const pizza = p.pizzas[hand];
+      if (!pizza || !pizza.baked) continue;
+      const c = nearestWaiting(p.x, p.y, DELIVER_RADIUS, pizzaRecipeId(pizza));
+      if (c) return { kind: 'deliver', ok: true, text: 'E: Deliver ' + RECIPES[c.recipeId].name, target: c, hand };
     }
     if (p.trash && inBinRange(p)) return { kind: 'toss', ok: true, text: 'E: Toss trash' };
     if (!p.trash) { const t = nearestTrash(p.x, p.y, 56); if (t) return { kind: 'pickup', ok: true, text: 'E: Pick up trash', target: t }; }
@@ -274,8 +315,7 @@
     }
     const pr = prep();
     if (inStationRange(p, pr)) {
-      const r = prepRequirement(p.pizzas);
-      return Object.assign({ kind: 'prep', target: pr }, r, { text: r.ok ? 'E: ' + r.action : r.hint });
+      return { kind: 'prep-menu', target: pr, ok: true, text: 'E: Choose ingredient' };
     }
     return null;
   }
@@ -298,7 +338,7 @@
     const p = state.player;
     if (c.mode === 'place') {
       const s = c.target.slots[c.oSlot];
-      s.pizza = p.pizzas[c.hSlot]; s.baking = true; s.done = false; s.timer = 0; s.claimedBy = null;
+      s.pizza = p.pizzas[c.hSlot]; s.pizza.recipeId = recipeForPizza(s.pizza); s.baking = true; s.done = false; s.timer = 0; s.claimedBy = null;
       p.pizzas[c.hSlot] = null; SND.step();
     } else {
       const pz = takeReadyOvenSlot(c.oSlot);
@@ -310,16 +350,16 @@
     if (c.takeaway) { c.state = 'paying'; c.payTimer = 1.3; }
     else { c.state = 'eating'; c.eatTimer = 3; }
   }
-  function deliver(c) {
+  function deliver(c, handIndex) {
     const p = state.player;
-    const idx = firstCarriedBaked();
-    if (idx < 0 || c.state !== 'waiting') return;
+    const idx = Number.isInteger(handIndex) ? handIndex : firstCarriedBaked(c.recipeId);
+    if (idx < 0 || c.state !== 'waiting' || pizzaRecipeId(p.pizzas[idx]) !== c.recipeId) return;
     p.pizzas[idx] = null;
     serveCustomer(c); SND.done();
   }
   function deliverByWaiter(c, w, handIdx) {
     const h = w.hands[handIdx];
-    if (!h || h.t !== 'pizza' || c.state !== 'waiting') { if (c.claimedBy === w.id) c.claimedBy = null; return; }
+    if (!h || h.t !== 'pizza' || c.state !== 'waiting' || pizzaRecipeId(h.pz) !== c.recipeId) { if (c.claimedBy === w.id) c.claimedBy = null; return; }
     w.hands[handIdx] = null; c.claimedBy = null;
     serveCustomer(c); SND.done();
   }
@@ -337,9 +377,9 @@
     if (p.action) return;
     const c = getContext();
     if (!c || c.ok === false) return;
-    if (c.kind === 'prep') p.action = { label: c.action, duration: c.dur, elapsed: 0, onComplete: () => applyPrep(c) };
+    if (c.kind === 'prep-menu') toggleIngredientDropdown();
     else if (c.kind === 'oven') ovenInteract(c);
-    else if (c.kind === 'deliver') deliver(c.target);
+    else if (c.kind === 'deliver') deliver(c.target, c.hand);
     else if (c.kind === 'toss') { p.trash = null; SND.bin(); }
     else if (c.kind === 'pickup') { if (c.target) { p.trash = { t: 'trash' }; const i = state.trash.indexOf(c.target); if (i >= 0) state.trash.splice(i, 1); SND.done(); } }
   }
@@ -360,17 +400,40 @@
       }
     }
   }
-  canvas.addEventListener('click', (e) => {
+  function syncIngredientDropdown() {
+    const atPrep = started && !paused && !shift.showingReport && inStationRange(state.player, prep());
+    ingredientDropdown.classList.toggle('available', atPrep);
+    if (!atPrep) {
+      ingredientOptions.classList.add('hidden');
+      ingredientToggle.setAttribute('aria-expanded', 'false');
+    }
+    ingredientOptions.innerHTML = '';
+    for (const ing of availableIngredients()) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = ing.name;
+      const enabled = ing.isBase ? firstFreeHand() >= 0 : state.player.pizzas.some((pizza) => canAddIngredient(pizza, ing));
+      button.disabled = !enabled || !!state.player.action;
+      button.addEventListener('click', () => {
+        prepClickIngredient(ing);
+        ingredientOptions.classList.add('hidden');
+        ingredientToggle.setAttribute('aria-expanded', 'false');
+      });
+      ingredientOptions.appendChild(button);
+    }
+  }
+  function toggleIngredientDropdown() {
+    if (!inStationRange(state.player, prep())) return;
+    syncIngredientDropdown();
+    const opening = ingredientOptions.classList.contains('hidden');
+    ingredientOptions.classList.toggle('hidden', !opening);
+    ingredientToggle.setAttribute('aria-expanded', String(opening));
+  }
+  ingredientToggle.addEventListener('click', toggleIngredientDropdown);
+
+  canvas.addEventListener('click', () => {
     if (!startScreen.classList.contains('hidden')) return;
     if (hireMenu && !hireMenu.classList.contains('hidden')) { hireMenu.classList.add('hidden'); return; }
-    const rect = canvas.getBoundingClientRect();
-    const mx = (e.clientX - rect.left) * (W / rect.width);
-    const my = (e.clientY - rect.top) * (H / rect.height);
-    if (inStationRange(state.player, prep())) {
-      for (const ing of INGREDIENTS.filter((item) => activeRecipeIds().includes(item.id))) {
-        if (dist(mx, my, ing.iconX, ING_ICON_Y) < 22) { prepClickIngredient(ing); return; }
-      }
-    }
     tryInteract();
   });
 
@@ -387,8 +450,10 @@
     const seat = takeaway ? freeTakeaway() : freeSeat();
     if (!seat) return;
     seat.occupied = true; seat.cust = null;
+    const recipeIds = unlockedRecipeIds();
+    const recipeId = recipeIds[(Math.random() * recipeIds.length) | 0];
     const c = {
-      id: Math.random(), x: ENTRANCE.x, y: ENTRANCE.y, tx: seat.x, ty: seat.y,
+      id: Math.random(), recipeId, x: ENTRANCE.x, y: ENTRANCE.y, tx: seat.x, ty: seat.y,
       seat, takeaway, side: seat.side || 'n', table: seat.table || null, state: 'entering',
       color: CUST_COLORS[(Math.random() * CUST_COLORS.length) | 0],
       patience: takeaway ? 42 : 55, maxPatience: takeaway ? 42 : 55,
@@ -415,7 +480,8 @@
     } else if (c.state === 'paying') {
       c.payTimer -= dt;
       if (c.payTimer <= 0) {
-        state.cash += 9; state.served++; shift.stats.revenue += 9; shift.stats.served++;
+        const salePrice = RECIPES[c.recipeId].price;
+        state.cash += salePrice; state.served++; shift.stats.revenue += salePrice; shift.stats.served++;
         shift.stats.totalWait += c.waitElapsed || 0;
         if (c.takeaway) shift.stats.takeaway++; else shift.stats.dineIn++;
         if (!c.takeaway) spawnTrash(c.x, c.y, c.table ? c.table.id : null); SND.cash();
@@ -539,7 +605,8 @@
       if (ph < 0) { w.state = 'seek'; return; }
       if (!w.targetCust || w.targetCust.state !== 'waiting' || w.targetCust.claimedBy !== w.id) {
         if (w.targetCust && w.targetCust.claimedBy === w.id) w.targetCust.claimedBy = null;
-        const pick = mostImpatientUnclaimed();
+        const carriedRecipe = pizzaRecipeId(w.hands[ph].pz);
+        const pick = mostImpatientUnclaimed(carriedRecipe);
         if (!pick) { w.targetCust = null; moveEntity(w, 660, 250, dt); return; } // hold pizza, wait
         pick.claimedBy = w.id; w.targetCust = pick;
       }
@@ -609,14 +676,20 @@
       if (nx) { chef.state = 'toprep'; chef.pending = { type: 'add', handIdx: wipHand, ingId: nx.ing.id, label: nx.action, dur: nx.ing.dur }; return; }
     }
     const freeHand = chef.hands.findIndex((h) => !h);
-    if (freeHand >= 0) { chef.state = 'toprep'; chef.pending = { type: 'knead', handIdx: freeHand, label: 'Knead dough', dur: kneadDuration() }; return; }
+    if (freeHand >= 0) {
+      const waiting = state.customers.filter((c) => c.state === 'waiting');
+      const targetRecipeId = waiting.length ? waiting.sort((a, b) => a.patience - b.patience)[0].recipeId : unlockedRecipeIds()[(Math.random() * unlockedRecipeIds().length) | 0];
+      chef.state = 'toprep';
+      chef.pending = { type: 'knead', handIdx: freeHand, recipeId: targetRecipeId, label: 'Knead dough', dur: kneadDuration() };
+      return;
+    }
   }
   function startChefPrep(chef) {
     const p = chef.pending; chef.pending = null;
     if (!p) { chef.state = 'seekwork'; return; }
     const dur = p.dur * 1.2; // 20% slower than the player
     if (p.type === 'knead') {
-      chef.action = { label: p.label, duration: dur, elapsed: 0, onComplete: () => { chef.hands[p.handIdx] = { t: 'pizza', pz: newPizza('dough') }; SND.done(); } };
+      chef.action = { label: p.label, duration: dur, elapsed: 0, onComplete: () => { chef.hands[p.handIdx] = { t: 'pizza', pz: newPizza('dough', p.recipeId) }; SND.done(); } };
     } else {
       const idx = p.handIdx, id = p.ingId;
       chef.action = { label: p.label, duration: dur, elapsed: 0, onComplete: () => { if (chef.hands[idx] && chef.hands[idx].pz) chef.hands[idx].pz.added.add(id); SND.done(); } };
@@ -626,7 +699,7 @@
   function placeChefPizza(chef) {
     const s = oven().slots[chef.targetSlot];
     if (s && !s.pizza && chef.hands[chef.handSlot] && chef.hands[chef.handSlot].t === 'pizza') {
-      s.pizza = chef.hands[chef.handSlot].pz; s.baking = true; s.done = false; s.timer = 0; s.claimedBy = null;
+      s.pizza = chef.hands[chef.handSlot].pz; s.pizza.recipeId = recipeForPizza(s.pizza); s.baking = true; s.done = false; s.timer = 0; s.claimedBy = null;
       chef.hands[chef.handSlot] = null; SND.step();
     }
     chef.targetSlot = -1; chef.handSlot = -1;
@@ -746,7 +819,7 @@
     ctx.fillText(s.label, s.cx, y + 14);
     if (s.id === 'prep') {
       const atPrep = inStationRange(state.player, s);
-      INGREDIENTS.filter((ing) => activeRecipeIds().includes(ing.id)).forEach((ing) => {
+      availableIngredients().forEach((ing) => {
         const addable = atPrep && !state.player.action && (
           (ing.isBase && firstFreeHand() >= 0) || state.player.pizzas.some((pz) => canAddIngredient(pz, ing))
         );
@@ -807,12 +880,21 @@
       ctx.fillStyle = '#fff'; ctx.globalAlpha = 0.7;
       ctx.beginPath(); ctx.arc(cx - 3, cy - 2, 1.6, 0, 7); ctx.fill();
       ctx.beginPath(); ctx.arc(cx + 4, cy + 2, 1.6, 0, 7); ctx.fill(); ctx.globalAlpha = 1;
-    } else if (stage === 'baked') {
-      ctx.fillStyle = C.pizzaBaked; ctx.beginPath(); ctx.arc(cx, cy, r, 0, 7); ctx.fill();
-      ctx.fillStyle = '#d3543a'; ctx.beginPath(); ctx.arc(cx, cy, r - 3, 0, 7); ctx.fill();
-      ctx.fillStyle = '#f0d84a'; ctx.globalAlpha = 0.9;
-      ctx.beginPath(); ctx.arc(cx - 3, cy - 1, 2.4, 0, 7); ctx.fill();
-      ctx.beginPath(); ctx.arc(cx + 3, cy + 2, 2.4, 0, 7); ctx.fill(); ctx.globalAlpha = 1;
+    } else if (stage === 'pepperoni' || stage === 'mushroom' || stage.startsWith('baked-')) {
+      const baked = stage.startsWith('baked-');
+      const recipe = baked ? stage.slice(6) : stage;
+      ctx.fillStyle = baked ? C.pizzaBaked : C.pizzaDough; ctx.beginPath(); ctx.arc(cx, cy, r, 0, 7); ctx.fill();
+      ctx.fillStyle = baked ? '#d3543a' : C.pizzaCheese; ctx.beginPath(); ctx.arc(cx, cy, r - 3, 0, 7); ctx.fill();
+      if (recipe === 'pepperoni') {
+        ctx.fillStyle = '#9f2f27';
+        [[-4,-3],[4,2],[-1,5]].forEach(([dx,dy]) => { ctx.beginPath(); ctx.arc(cx + dx * scale, cy + dy * scale, 2.4 * scale, 0, 7); ctx.fill(); });
+      } else if (recipe === 'funghi' || recipe === 'mushroom') {
+        ctx.fillStyle = '#d8c5aa';
+        [[-4,-3],[4,2],[-1,5]].forEach(([dx,dy]) => { ctx.beginPath(); ctx.arc(cx + dx * scale, cy + dy * scale, 2.2 * scale, Math.PI, 0); ctx.fill(); });
+      } else {
+        ctx.fillStyle = '#f0d84a'; ctx.beginPath(); ctx.arc(cx - 3, cy - 1, 2.4, 0, 7); ctx.fill();
+        ctx.beginPath(); ctx.arc(cx + 3, cy + 2, 2.4, 0, 7); ctx.fill();
+      }
     }
   }
   function drawTrashIcon(cx, cy) {
@@ -888,7 +970,7 @@
     if (c.state === 'waiting') {
       const off = { n: { x: 0, y: -34 }, s: { x: 0, y: 34 }, e: { x: 42, y: 0 }, w: { x: -42, y: 0 } }[c.side] || { x: 0, y: -34 };
       const bx = c.x + off.x, by = c.y + off.y;
-      const txt = activeRecipe().name + (c.takeaway ? ' · to go' : '');
+      const txt = RECIPES[c.recipeId].name + (c.takeaway ? ' · to go' : '');
       ctx.font = "800 10px 'Nunito', sans-serif"; const tw = ctx.measureText(txt).width + 14;
       ctx.fillStyle = C.bubble; roundRect(bx - tw / 2, by - 11, tw, 20, 7); ctx.fill();
       ctx.beginPath();
@@ -912,7 +994,7 @@
       ctx.globalAlpha = 1 - prog * 0.7;
       ctx.fillStyle = C.money; roundRect(c.x - 9, fy - 7, 18, 14, 3); ctx.fill();
       ctx.fillStyle = '#fff'; ctx.font = "800 11px 'Nunito', sans-serif"; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText('$9', c.x, fy);
+      ctx.fillText('$' + RECIPES[c.recipeId].price, c.x, fy);
       ctx.globalAlpha = 1;
     }
   }
@@ -1012,9 +1094,9 @@
     ovenUpgradeBtn.querySelector('span').textContent = progress.ovenLevel >= 2 ? 'Purchased - 20% faster' : '20% faster baking - $70';
     recipeButtons.forEach((button) => {
       const id = button.dataset.recipe, unlocked = progress.unlockedRecipes.has(id);
-      button.disabled = !unlocked && shift.recipeUnlockUsed;
-      button.classList.toggle('selected', progress.selectedRecipe === id);
-      button.textContent = unlocked ? RECIPES[id].name : 'Unlock ' + RECIPES[id].name;
+      button.disabled = unlocked || state.cash < 60;
+      button.classList.toggle('purchased', unlocked);
+      button.textContent = unlocked ? RECIPES[id].name + ' · Unlocked' : 'Unlock ' + RECIPES[id].name + ' · $60';
     });
   }
   doughUpgradeBtn.addEventListener('click', () => {
@@ -1027,11 +1109,10 @@
   });
   recipeButtons.forEach((button) => button.addEventListener('click', () => {
     const id = button.dataset.recipe;
-    if (!progress.unlockedRecipes.has(id)) {
-      if (shift.recipeUnlockUsed) return;
-      progress.unlockedRecipes.add(id); shift.recipeUnlockUsed = true;
-    }
-    progress.selectedRecipe = id; refreshReportOptions();
+    if (progress.unlockedRecipes.has(id) || state.cash < 60) return;
+    state.cash -= 60;
+    progress.unlockedRecipes.add(id);
+    refreshReportOptions();
   }));
   function resetRestaurantForNextShift() {
     state.customers = []; state.waiters = []; state.chefs = []; state.trash = []; state.spawnTimer = 2.5;
@@ -1059,6 +1140,12 @@
     pauseBtn.textContent = paused ? 'Resume' : 'Pause';
     pauseBtn.setAttribute('aria-pressed', String(paused));
     pauseOverlay.classList.toggle('hidden', !paused);
+    if (paused) {
+      pauseRecipes.innerHTML = '<strong>Recipes</strong>' + unlockedRecipeIds().map((id) =>
+        '<span>' + RECIPES[id].name + ': ' + RECIPES[id].ingredients.map((ingredient) => ING_MAP[ingredient].name).join(' → ') + ' · $' + RECIPES[id].price + '</span>'
+      ).join('');
+    }
+    ingredientOptions.classList.add('hidden');
     hireWrap.classList.toggle('paused', paused);
     last = performance.now();
     if (!paused && audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
@@ -1086,6 +1173,7 @@
   function update(dt) {
     updateShift(dt);
     updatePlayer(dt);
+    syncIngredientDropdown();
     updateOven(dt);
     assignJobs();
     for (const w of state.waiters) updateWaiter(w, dt);
@@ -1129,6 +1217,7 @@
     startScreen.classList.add('hidden');
     if (hireWrap) hireWrap.classList.remove('hidden');
     if (gameControls) gameControls.classList.remove('hidden');
+    if (ingredientDropdown) ingredientDropdown.classList.remove('hidden');
     last = performance.now();
     requestAnimationFrame(frame);
   }
