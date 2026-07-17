@@ -8,6 +8,10 @@
   const hireBtn = document.getElementById('hireBtn');
   const hireMenu = document.getElementById('hireMenu');
   const hireWrap = document.getElementById('hireWrap');
+  const gameControls = document.getElementById('gameControls');
+  const pauseBtn = document.getElementById('pauseBtn');
+  const restartBtn = document.getElementById('restartBtn');
+  const pauseOverlay = document.getElementById('pauseOverlay');
   const W = 960, H = 620;
 
   /* ---------- palette (warm pizzeria) ---------- */
@@ -85,6 +89,12 @@
   const Input = { keys: {}, pressed: {} };
   const MOVE_KEYS = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowLeft', 'ArrowDown', 'ArrowRight'];
   addEventListener('keydown', (e) => {
+    if ((e.code === 'KeyP' || e.code === 'Escape') && started) {
+      e.preventDefault();
+      togglePause();
+      return;
+    }
+    if (paused) return;
     if (MOVE_KEYS.includes(e.code) || e.code === 'KeyE' || e.code === 'Space') e.preventDefault();
     if (!Input.keys[e.code]) Input.pressed[e.code] = true;
     Input.keys[e.code] = true;
@@ -915,10 +925,39 @@
 
   /* ---------- main loop ---------- */
   let last = 0;
+  let started = false;
+  let paused = false;
+
+  function setPaused(nextPaused) {
+    if (!started || paused === nextPaused) return;
+    paused = nextPaused;
+    Input.keys = {};
+    Input.pressed = {};
+    pauseBtn.textContent = paused ? 'Resume' : 'Pause';
+    pauseBtn.setAttribute('aria-pressed', String(paused));
+    pauseOverlay.classList.toggle('hidden', !paused);
+    hireWrap.classList.toggle('paused', paused);
+    last = performance.now();
+    if (!paused && audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
+  }
+
+  function togglePause() {
+    setPaused(!paused);
+  }
+
+  pauseBtn.addEventListener('click', togglePause);
+  restartBtn.addEventListener('click', () => window.location.reload());
+
   function frame(t) {
+    if (!started) return;
     const dt = Math.min(0.05, (t - last) / 1000 || 0);
-    last = t; state.time += dt;
-    update(dt); render(); Input.pressed = {};
+    last = t;
+    if (!paused) {
+      state.time += dt;
+      update(dt);
+    }
+    render();
+    Input.pressed = {};
     requestAnimationFrame(frame);
   }
   function update(dt) {
@@ -949,11 +988,19 @@
 
   /* ---------- start ---------- */
   function start() {
-    if (audioCtx) return;
-    try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {}
+    if (started) return;
+    started = true;
+    try {
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      if (AudioContextClass) audioCtx = new AudioContextClass();
+    } catch (e) {
+      audioCtx = null;
+    }
     startScreen.classList.add('hidden');
     if (hireWrap) hireWrap.classList.remove('hidden');
-    last = performance.now(); requestAnimationFrame(frame);
+    if (gameControls) gameControls.classList.remove('hidden');
+    last = performance.now();
+    requestAnimationFrame(frame);
   }
   startScreen.addEventListener('click', start);
   startScreen.addEventListener('keydown', (e) => { if (e.code === 'Enter' || e.code === 'Space') { e.preventDefault(); start(); } });
