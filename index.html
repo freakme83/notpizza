@@ -25,6 +25,12 @@
       <div id="pauseOverlay" class="hidden" role="status" aria-live="polite">
         <strong>Paused</strong>
         <span>Press P or Escape to continue</span>
+        <div id="pauseRecipes" class="pause-recipes"></div>
+      </div>
+
+      <div id="ingredientDropdown" class="ingredient-dropdown hidden" aria-label="Choose ingredient">
+        <button id="ingredientToggle" type="button" aria-expanded="false">Ingredients ▾</button>
+        <div id="ingredientOptions" class="ingredient-options hidden"></div>
       </div>
 
       <section id="shiftReport" class="hidden" aria-labelledby="reportTitle">
@@ -38,7 +44,7 @@
             <button id="ovenUpgrade" class="option-card" type="button"><strong>Faster oven · Level 2</strong><span>20% faster baking · $70</span></button>
           </div>
           <h3>Menu for the next shift</h3>
-          <p class="report-note">Choose any unlocked recipe. You may unlock one new recipe after each shift.</p>
+          <p class="report-note">Unlock recipes permanently for $60 each. Customers choose randomly from your unlocked menu.</p>
           <div class="report-options recipe-options">
             <button class="option-card recipe-choice" data-recipe="margherita" type="button">Margherita</button>
             <button class="option-card recipe-choice" data-recipe="pepperoni" type="button">Unlock Pepperoni</button>
@@ -63,6 +69,6 @@
         <span>click to start</span>
       </div>
     </div>
-    <script src="main.js?v=phase7"></script>
+    <script src="main.js?v=phase8"></script>
   </body>
 </html>

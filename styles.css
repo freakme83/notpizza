@@ -344,3 +344,89 @@ canvas#game {
   .recipe-options { grid-template-columns: 1fr; }
   .report-card { padding: 18px; }
 }
+
+
+.ingredient-dropdown {
+  position: absolute;
+  left: 18px;
+  bottom: 18px;
+  z-index: 8;
+  display: none;
+}
+
+.ingredient-dropdown.available {
+  display: block;
+}
+
+.ingredient-dropdown.hidden {
+  display: none;
+}
+
+#ingredientToggle,
+.ingredient-options button {
+  border: 1px solid rgba(255, 217, 160, 0.32);
+  border-radius: 999px;
+  padding: 8px 13px;
+  color: #fff7ec;
+  background: rgba(36, 26, 18, 0.94);
+  font: 800 0.78rem 'Nunito', sans-serif;
+  cursor: pointer;
+}
+
+.ingredient-options {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 7px);
+  display: flex;
+  min-width: 150px;
+  flex-direction: column;
+  gap: 5px;
+  padding: 7px;
+  border: 1px solid rgba(255, 217, 160, 0.22);
+  border-radius: 12px;
+  background: rgba(42, 31, 23, 0.98);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.38);
+}
+
+.ingredient-options.hidden {
+  display: none;
+}
+
+.ingredient-options button {
+  width: 100%;
+  border-radius: 8px;
+  text-align: left;
+}
+
+.ingredient-options button:hover:not(:disabled) {
+  border-color: #ffd9a0;
+  background: #554032;
+}
+
+.ingredient-options button:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.pause-recipes {
+  display: flex;
+  width: min(460px, 86%);
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid rgba(255, 217, 160, 0.25);
+  border-radius: 12px;
+  background: rgba(36, 26, 18, 0.82);
+}
+
+.pause-recipes strong {
+  color: #ffd9a0;
+  font: 600 0.95rem 'Fredoka', sans-serif;
+}
+
+.pause-recipes span {
+  color: #fff7ec;
+  font-size: 0.75rem;
+  text-align: left;
+}
