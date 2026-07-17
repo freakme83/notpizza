@@ -10,7 +10,7 @@
 html, body {
   height: 100%;
   background: var(--bg);
-  font-family: 'Nunito', sans-serif;
+  font-family: 'Inter', sans-serif;
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
 }
@@ -59,7 +59,7 @@ canvas#game {
 #start.hidden { opacity: 0; pointer-events: none; }
 
 #start h1 {
-  font-family: 'Fredoka', sans-serif;
+  font-family: 'Barlow Condensed', sans-serif;
   font-weight: 700;
   font-size: clamp(2rem, 6vw, 3.4rem);
   color: var(--title);
@@ -75,7 +75,7 @@ canvas#game {
 
 #start span {
   margin-top: 8px;
-  font-family: 'Fredoka', sans-serif;
+  font-family: 'Barlow Condensed', sans-serif;
   font-weight: 600;
   font-size: clamp(0.8rem, 2vw, 0.95rem);
   color: #1a1410;
@@ -103,7 +103,7 @@ canvas#game {
 #hireWrap.hidden { display: none; }
 
 #hireBtn {
-  font-family: 'Nunito', sans-serif;
+  font-family: 'Inter', sans-serif;
   font-weight: 800;
   font-size: clamp(0.7rem, 1.6vw, 0.85rem);
   color: #fff7ec;
@@ -127,7 +127,7 @@ canvas#game {
 }
 #hireMenu.hidden { display: none; }
 #hireMenu button {
-  font-family: 'Nunito', sans-serif;
+  font-family: 'Inter', sans-serif;
   font-weight: 800;
   font-size: clamp(0.68rem, 1.5vw, 0.8rem);
   color: #fff7ec;
@@ -168,7 +168,7 @@ canvas#game {
   padding: 7px 13px;
   color: #fff7ec;
   background: rgba(36, 26, 18, 0.88);
-  font: 800 clamp(0.68rem, 1.5vw, 0.8rem) 'Nunito', sans-serif;
+  font: 800 clamp(0.68rem, 1.5vw, 0.8rem) 'Inter', sans-serif;
   cursor: pointer;
 }
 
@@ -197,7 +197,7 @@ canvas#game {
 
 #pauseOverlay strong {
   color: #ffd9a0;
-  font: 700 clamp(2rem, 6vw, 3.4rem) 'Fredoka', sans-serif;
+  font: 700 clamp(2rem, 6vw, 3.4rem) 'Barlow Condensed', sans-serif;
 }
 
 #pauseOverlay span {
@@ -255,13 +255,13 @@ canvas#game {
 .report-card h2 {
   margin: 4px 0 14px;
   color: #ffd9a0;
-  font: 700 clamp(1.7rem, 5vw, 2.7rem) 'Fredoka', sans-serif;
+  font: 700 clamp(1.7rem, 5vw, 2.7rem) 'Barlow Condensed', sans-serif;
 }
 
 .report-card h3 {
   margin: 18px 0 8px;
   color: #ffd9a0;
-  font: 600 1rem 'Fredoka', sans-serif;
+  font: 600 1rem 'Barlow Condensed', sans-serif;
 }
 
 .report-stats {
@@ -312,7 +312,7 @@ canvas#game {
   border-radius: 10px;
   color: #fff7ec;
   background: #3b2d23;
-  font: 800 0.82rem 'Nunito', sans-serif;
+  font: 800 0.82rem 'Inter', sans-serif;
   cursor: pointer;
 }
 
@@ -334,7 +334,7 @@ canvas#game {
   border-radius: 999px;
   color: #1a1410;
   background: #ffd9a0;
-  font: 800 0.95rem 'Nunito', sans-serif;
+  font: 800 0.95rem 'Inter', sans-serif;
   cursor: pointer;
 }
 
@@ -369,7 +369,7 @@ canvas#game {
   padding: 8px 13px;
   color: #fff7ec;
   background: rgba(36, 26, 18, 0.94);
-  font: 800 0.78rem 'Nunito', sans-serif;
+  font: 800 0.78rem 'Inter', sans-serif;
   cursor: pointer;
 }
 
@@ -422,7 +422,7 @@ canvas#game {
 
 .pause-recipes strong {
   color: #ffd9a0;
-  font: 600 0.95rem 'Fredoka', sans-serif;
+  font: 600 0.95rem 'Barlow Condensed', sans-serif;
 }
 
 .pause-recipes span {
