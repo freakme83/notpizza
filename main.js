@@ -1,0 +1,962 @@
+/* you are not pizza — top-down pizzeria sim (phase 4: nearest-waiter, garbage, fast waiter, pay animation) */
+(() => {
+  'use strict';
+
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const startScreen = document.getElementById('start');
+  const hireBtn = document.getElementById('hireBtn');
+  const hireMenu = document.getElementById('hireMenu');
+  const hireWrap = document.getElementById('hireWrap');
+  const W = 960, H = 620;
+
+  /* ---------- palette (warm pizzeria) ---------- */
+  const C = {
+    floor1: '#e9d6ab', floor2: '#dec590',
+    wall: '#c69e6e', wallTrim: '#b3865a',
+    counter: '#9a6740', counterTop: '#bb8254',
+    dough: '#f3e3bf', sauce: '#c63b2f', cheese: '#f4cf3a', oven: '#5b3a28', ovenMouth: '#ff8c2a',
+    table: '#a96038', tableTop: '#c47a4c', chair: '#87513a',
+    player: '#2c3e50', skin: '#e8b98f', apron: '#fafafa', hat: '#ffffff',
+    pizzaDough: '#f3dcae', pizzaSauce: '#c63b2f', pizzaCheese: '#f4d84a', pizzaBaked: '#e3ad4b',
+    text: '#3a2a1a', textInv: '#fff7ec', ui: '#241a12',
+    good: '#7cb342', bad: '#e53935', bubble: '#fff8ec', dim: '#8a6f4e',
+    waiter: '#6b5b95', waiterFast: '#2a9d8f', waiterApron: '#e9e9ef', tray: '#f4ead0',
+    trash: '#9a8f7a', trashPaper: '#e8e0cc', bin: '#4a4038', binLid: '#6b5d4a',
+    money: '#4caf50',
+  };
+
+  /* ---------- layout ---------- */
+  const STATIONS = [
+    { id: 'prep', label: 'Prep', cx: 300, w: 300, h: 92, use: { x: 300, y: 182 } },
+    { id: 'oven', label: 'Oven', cx: 660, w: 300, h: 92, use: { x: 660, y: 182 },
+      slots: [
+        { cx: 660 - 74, pizza: null, timer: 0, baking: false, done: false, claimedBy: null },
+        { cx: 660 + 74, pizza: null, timer: 0, baking: false, done: false, claimedBy: null },
+      ] },
+  ];
+  const KNEAD_DUR = 3.5, SAUCE_DUR = 1.5, CHEESE_DUR = 1.5, BAKE_DUR = 4.5;
+
+  /* ---------- extensible ingredient system ---------- */
+  const INGREDIENTS = [
+    { id: 'dough',  name: 'Dough',  requires: [],         dur: KNEAD_DUR,  isBase: true,  iconX: 300 - 60 },
+    { id: 'sauce',  name: 'Sauce',  requires: ['dough'],  dur: SAUCE_DUR,  iconX: 300 },
+    { id: 'cheese', name: 'Cheese', requires: ['sauce'],  dur: CHEESE_DUR, iconX: 300 + 60 },
+  ];
+  const ING_MAP = Object.fromEntries(INGREDIENTS.map((i) => [i.id, i]));
+  const ING_ICON_Y = 126;
+  const RECIPE = ['dough', 'sauce', 'cheese'];
+  const WAITER_COST = 25, FAST_WAITER_COST = 35, WAITER_DURATION = 300;
+  const CHEF_COST = 100, CHEF_DURATION = 300;
+
+  // trash bin next to oven (just right of the oven counter)
+  const BIN = { x: 836, y: 252, r: 20 };
+
+  const TABLES = [];
+  [360, 620].forEach((tx, ti) => {
+    const cy = 372;
+    const table = { id: ti, x: tx, y: cy, r: 37, seats: null };
+    const seats = [
+      { x: tx, y: cy - 52, side: 'n', occupied: false, cust: null, table },
+      { x: tx, y: cy + 52, side: 's', occupied: false, cust: null, table },
+      { x: tx + 54, y: cy, side: 'e', occupied: false, cust: null, table },
+      { x: tx - 54, y: cy, side: 'w', occupied: false, cust: null, table },
+    ];
+    table.seats = seats; TABLES.push(table);
+  });
+
+  const PICKUP = { x: 30, y: 463, w: 100, h: 34, use: { x: 80, y: 565 } };
+  const TAKEAWAY_SPOTS = [
+    { x: 80, y: 545, occupied: false, cust: null },
+    { x: 80, y: 585, occupied: false, cust: null },
+  ];
+  const ENTRANCE = { x: 480, y: 612 };
+
+  /* ---------- state ---------- */
+  let waiterSeq = 0, chefSeq = 0;
+  const state = {
+    cash: 0, served: 0,
+    player: { x: 480, y: 500, r: 15, speed: 195, pizzas: [null, null], trash: null, action: null, dir: 1, walk: 0 },
+    customers: [], waiters: [], chefs: [], trash: [],
+    spawnTimer: 3.5, time: 0,
+  };
+
+  /* ---------- input ---------- */
+  const Input = { keys: {}, pressed: {} };
+  const MOVE_KEYS = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowLeft', 'ArrowDown', 'ArrowRight'];
+  addEventListener('keydown', (e) => {
+    if (MOVE_KEYS.includes(e.code) || e.code === 'KeyE' || e.code === 'Space') e.preventDefault();
+    if (!Input.keys[e.code]) Input.pressed[e.code] = true;
+    Input.keys[e.code] = true;
+  });
+  addEventListener('keyup', (e) => { Input.keys[e.code] = false; });
+
+  /* ---------- audio ---------- */
+  let audioCtx = null;
+  function sfx(freq, dur = 0.12, type = 'sine', vol = 0.18, slide = 0) {
+    if (!audioCtx) return;
+    const t = audioCtx.currentTime;
+    const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+    o.type = type; o.frequency.setValueAtTime(freq, t);
+    if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(40, freq + slide), t + dur);
+    g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0008, t + dur);
+    o.connect(g).connect(audioCtx.destination); o.start(t); o.stop(t + dur);
+  }
+  const SND = {
+    step: () => sfx(220, 0.09, 'square', 0.05),
+    done: () => sfx(660, 0.12, 'triangle', 0.16, 220),
+    cash: () => { sfx(880, 0.1, 'triangle', 0.16); setTimeout(() => sfx(1320, 0.12, 'triangle', 0.14), 70); },
+    angry: () => sfx(140, 0.3, 'sawtooth', 0.14, -60),
+    hire: () => { sfx(520, 0.1, 'triangle', 0.14); setTimeout(() => sfx(780, 0.12, 'triangle', 0.14), 90); },
+    bin: () => sfx(180, 0.14, 'square', 0.1, -40),
+  };
+
+  /* ---------- utils ---------- */
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const dist = (x1, y1, x2, y2) => Math.hypot(x2 - x1, y2 - y1);
+  const rand = (a, b) => a + Math.random() * (b - a);
+  const oven = () => STATIONS.find((s) => s.id === 'oven');
+  const prep = () => STATIONS.find((s) => s.id === 'prep');
+
+  /* ---------- pizza model ---------- */
+  const newPizza = (base) => ({ added: new Set(base ? [base] : []), baked: false });
+  const canAddIngredient = (pz, ing) => pz && !pz.baked && !pz.added.has(ing.id) && ing.requires.every((r) => pz.added.has(r));
+  const pizzaReadyToBake = (pz) => pz && !pz.baked && RECIPE.every((r) => pz.added.has(r));
+  function pizzaStage(pz) {
+    if (!pz) return null;
+    if (pz.baked) return 'baked';
+    if (pz.added.has('cheese')) return 'cheese';
+    if (pz.added.has('sauce')) return 'sauce';
+    return 'dough';
+  }
+
+  /* ---------- hand helpers ---------- */
+  const firstFreeHand = () => state.player.pizzas.findIndex((x) => !x);
+  const firstCarriedBaked = () => state.player.pizzas.findIndex((x) => x && x.baked);
+  const firstCarriedReady = () => state.player.pizzas.findIndex((x) => pizzaReadyToBake(x));
+  const hasFreeHand = (w) => w.hands.findIndex((h) => !h);
+  const carriedPizzaHand = (w) => w.hands.findIndex((h) => h && h.t === 'pizza');
+  const carriedTrashHand = (w) => w.hands.findIndex((h) => h && h.t === 'trash');
+
+  /* ---------- interaction range ---------- */
+  function inStationRange(p, s) {
+    const half = s.w / 2 + 30;
+    return p.x > s.cx - half && p.x < s.cx + half && p.y > 158 && p.y < 262;
+  }
+  const inBinRange = (p) => dist(p.x, p.y, BIN.x, BIN.y) < 58;
+  const DELIVER_RADIUS = 72;
+
+  /* ---------- requirements (player) ---------- */
+  function nextActionForPizza(pz) {
+    for (const id of RECIPE) {
+      if (!pz.added.has(id)) {
+        const ing = ING_MAP[id];
+        if (ing.requires.every((r) => pz.added.has(r))) return { ing, action: 'Add ' + ing.name };
+        return null;
+      }
+    }
+    return null;
+  }
+  function prepRequirement(pizzas) {
+    for (let i = 0; i < pizzas.length; i++) {
+      const pz = pizzas[i];
+      if (pz && !pz.baked) {
+        const nx = nextActionForPizza(pz);
+        if (nx) return { ok: true, action: nx.action, dur: nx.ing.dur, slot: i, add: nx.ing.id };
+      }
+    }
+    const free = firstFreeHand();
+    if (free >= 0) return { ok: true, action: 'Knead dough', dur: KNEAD_DUR, slot: free, make: 'dough' };
+    if (pizzas.some((x) => x && x.baked)) return { ok: false, hint: 'deliver' };
+    if (pizzas.some((x) => pizzaReadyToBake(x))) return { ok: false, hint: 'to oven' };
+    return { ok: false, hint: 'hands full' };
+  }
+  function ovenRequirement(pizzas, ov) {
+    const readyHand = firstCarriedReady();
+    const freeOven = ov.slots.findIndex((s) => !s.pizza);
+    if (readyHand >= 0 && freeOven >= 0) return { ok: true, action: 'Bake', mode: 'place', oSlot: freeOven, hSlot: readyHand };
+    const bakedOven = ov.slots.findIndex((s) => s.pizza && s.done && s.claimedBy === null);
+    const freeHand = firstFreeHand();
+    if (bakedOven >= 0 && freeHand >= 0) return { ok: true, action: 'Collect', mode: 'collect', oSlot: bakedOven, hSlot: freeHand };
+    if (readyHand >= 0) return { ok: false, hint: 'oven full' };
+    if (bakedOven >= 0) return { ok: false, hint: 'hands full' };
+    if (ov.slots.some((s) => s.pizza && !s.done)) return { ok: false, hint: 'baking...' };
+    return { ok: false, hint: 'need cheese' };
+  }
+
+  function nearestWaiting(x, y, range) {
+    let best = null, bd = range;
+    for (const c of state.customers) {
+      if (c.state !== 'waiting' || c.claimedBy !== null) continue;
+      const d = dist(x, y, c.x, c.y);
+      if (d < bd) { bd = d; best = c; }
+    }
+    return best;
+  }
+  function nearestTrash(x, y, range) {
+    let best = null, bd = range;
+    for (const t of state.trash) {
+      if (t.claimedBy !== null) continue;
+      const d = dist(x, y, t.x, t.y);
+      if (d < bd) { bd = d; best = t; }
+    }
+    return best;
+  }
+  function mostImpatientUnclaimed() {
+    let best = null;
+    for (const c of state.customers) {
+      if (c.state !== 'waiting' || c.claimedBy !== null) continue;
+      if (!best || c.patience < best.patience) best = c;
+    }
+    return best;
+  }
+  function nearestTrashUnclaimed() {
+    let best = null, bd = 1e9;
+    for (const t of state.trash) {
+      if (t.claimedBy !== null) continue;
+      const d = dist(660, 250, t.x, t.y);
+      if (d < bd) { bd = d; best = t; }
+    }
+    return best;
+  }
+
+  function getContext() {
+    const p = state.player;
+    if (p.action) return null;
+    if (firstCarriedBaked() >= 0) {
+      const c = nearestWaiting(p.x, p.y, DELIVER_RADIUS);
+      if (c) return { kind: 'deliver', ok: true, text: 'E: Deliver', target: c };
+    }
+    if (p.trash && inBinRange(p)) return { kind: 'toss', ok: true, text: 'E: Toss trash' };
+    if (!p.trash) { const t = nearestTrash(p.x, p.y, 56); if (t) return { kind: 'pickup', ok: true, text: 'E: Pick up trash', target: t }; }
+    const ov = oven();
+    if (inStationRange(p, ov)) {
+      const r = ovenRequirement(p.pizzas, ov);
+      return Object.assign({ kind: 'oven', target: ov }, r, { text: r.ok ? 'E: ' + r.action : r.hint });
+    }
+    const pr = prep();
+    if (inStationRange(p, pr)) {
+      const r = prepRequirement(p.pizzas);
+      return Object.assign({ kind: 'prep', target: pr }, r, { text: r.ok ? 'E: ' + r.action : r.hint });
+    }
+    return null;
+  }
+
+  /* ---------- actions ---------- */
+  function applyPrep(c) {
+    const p = state.player;
+    if (c.make) p.pizzas[c.slot] = newPizza(c.make);
+    else if (p.pizzas[c.slot]) p.pizzas[c.slot].added.add(c.add);
+    SND.done();
+  }
+  function takeReadyOvenSlot(slotIndex, ownerId) {
+    const s = oven().slots[slotIndex];
+    if (!s || !s.pizza || !s.done || (s.claimedBy !== null && s.claimedBy !== ownerId)) return null;
+    const pz = s.pizza;
+    s.pizza = null; s.baking = false; s.done = false; s.timer = 0; s.claimedBy = null;
+    return pz;
+  }
+  function ovenInteract(c) {
+    const p = state.player;
+    if (c.mode === 'place') {
+      const s = c.target.slots[c.oSlot];
+      s.pizza = p.pizzas[c.hSlot]; s.baking = true; s.done = false; s.timer = 0; s.claimedBy = null;
+      p.pizzas[c.hSlot] = null; SND.step();
+    } else {
+      const pz = takeReadyOvenSlot(c.oSlot);
+      if (pz) { p.pizzas[c.hSlot] = pz; SND.done(); }
+    }
+  }
+  // customer served → eats (dine-in) or pays now (takeaway). cash is added on pay completion.
+  function serveCustomer(c) {
+    if (c.takeaway) { c.state = 'paying'; c.payTimer = 1.3; }
+    else { c.state = 'eating'; c.eatTimer = 3; }
+  }
+  function deliver(c) {
+    const p = state.player;
+    const idx = firstCarriedBaked();
+    if (idx < 0 || c.state !== 'waiting') return;
+    p.pizzas[idx] = null;
+    serveCustomer(c); SND.done();
+  }
+  function deliverByWaiter(c, w, handIdx) {
+    const h = w.hands[handIdx];
+    if (!h || h.t !== 'pizza' || c.state !== 'waiting') { if (c.claimedBy === w.id) c.claimedBy = null; return; }
+    w.hands[handIdx] = null; c.claimedBy = null;
+    serveCustomer(c); SND.done();
+  }
+  function returnPizzaToOven(pz) {
+    const s = oven().slots.find((sl) => !sl.pizza);
+    if (s) { s.pizza = pz; s.baking = false; s.done = true; s.timer = BAKE_DUR; s.claimedBy = null; }
+  }
+  function spawnTrash(x, y, tableId = null) {
+    if (state.trash.length > 40) return;
+    state.trash.push({ x, y: y + 6, claimedBy: null, tableId });
+  }
+
+  function tryInteract() {
+    const p = state.player;
+    if (p.action) return;
+    const c = getContext();
+    if (!c || c.ok === false) return;
+    if (c.kind === 'prep') p.action = { label: c.action, duration: c.dur, elapsed: 0, onComplete: () => applyPrep(c) };
+    else if (c.kind === 'oven') ovenInteract(c);
+    else if (c.kind === 'deliver') deliver(c.target);
+    else if (c.kind === 'toss') { p.trash = null; SND.bin(); }
+    else if (c.kind === 'pickup') { if (c.target) { p.trash = { t: 'trash' }; const i = state.trash.indexOf(c.target); if (i >= 0) state.trash.splice(i, 1); SND.done(); } }
+  }
+  function prepClickIngredient(ing) {
+    const p = state.player;
+    if (p.action) return;
+    if (!inStationRange(p, prep())) return;
+    if (ing.isBase) {
+      const free = firstFreeHand();
+      if (free >= 0) p.action = { label: 'Knead dough', duration: ing.dur, elapsed: 0, onComplete: () => { p.pizzas[free] = newPizza(ing.id); SND.done(); } };
+      return;
+    }
+    for (let i = 0; i < p.pizzas.length; i++) {
+      if (canAddIngredient(p.pizzas[i], ing)) {
+        const idx = i, id = ing.id, nm = ing.name, dur = ing.dur;
+        p.action = { label: 'Add ' + nm, duration: dur, elapsed: 0, onComplete: () => { if (p.pizzas[idx]) p.pizzas[idx].added.add(id); SND.done(); } };
+        return;
+      }
+    }
+  }
+  canvas.addEventListener('click', (e) => {
+    if (!startScreen.classList.contains('hidden')) return;
+    if (hireMenu && !hireMenu.classList.contains('hidden')) { hireMenu.classList.add('hidden'); return; }
+    const rect = canvas.getBoundingClientRect();
+    const mx = (e.clientX - rect.left) * (W / rect.width);
+    const my = (e.clientY - rect.top) * (H / rect.height);
+    if (inStationRange(state.player, prep())) {
+      for (const ing of INGREDIENTS) { if (dist(mx, my, ing.iconX, ING_ICON_Y) < 22) { prepClickIngredient(ing); return; } }
+    }
+    tryInteract();
+  });
+
+  /* ---------- customers ---------- */
+  const CUST_COLORS = ['#d96b4a', '#5b8c5a', '#7b6cb0', '#c98a3a', '#4a90b0', '#b05a7a', '#6a8a3a'];
+  function freeSeat() {
+    for (const t of TABLES) for (const s of t.seats)
+      if (!s.occupied && !state.trash.some((tr) => tr.tableId === t.id)) return s;
+    return null;
+  }
+  function freeTakeaway() { return TAKEAWAY_SPOTS.find((s) => !s.occupied) || null; }
+  function spawnCustomer() {
+    const takeaway = Math.random() < 0.33;
+    const seat = takeaway ? freeTakeaway() : freeSeat();
+    if (!seat) return;
+    seat.occupied = true; seat.cust = null;
+    const c = {
+      id: Math.random(), x: ENTRANCE.x, y: ENTRANCE.y, tx: seat.x, ty: seat.y,
+      seat, takeaway, side: seat.side || 'n', table: seat.table || null, state: 'entering',
+      color: CUST_COLORS[(Math.random() * CUST_COLORS.length) | 0],
+      patience: takeaway ? 42 : 55, maxPatience: takeaway ? 42 : 55,
+      eatTimer: 0, payTimer: 0, bob: Math.random() * 6, claimedBy: null,
+    };
+    seat.cust = c; state.customers.push(c);
+  }
+  function updateCustomer(c, dt) {
+    c.bob += dt * 6;
+    if (c.state === 'entering') {
+      moveToward(c, c.tx, c.ty, 78, dt);
+      if (dist(c.x, c.y, c.tx, c.ty) < 4) { c.x = c.tx; c.y = c.ty; c.state = 'waiting'; }
+    } else if (c.state === 'waiting') {
+      c.patience -= dt;
+      if (c.patience <= 0) {
+        c.state = 'leaving'; c.claimedBy = null;
+        if (c.seat) { c.seat.occupied = false; c.seat.cust = null; c.seat = null; }
+        SND.angry();
+      }
+    } else if (c.state === 'eating') {
+      c.eatTimer -= dt;
+      if (c.eatTimer <= 0) { c.state = 'paying'; c.payTimer = 1.3; }
+    } else if (c.state === 'paying') {
+      c.payTimer -= dt;
+      if (c.payTimer <= 0) {
+        state.cash += 9; state.served++; if (!c.takeaway) spawnTrash(c.x, c.y, c.table ? c.table.id : null); SND.cash();
+        if (c.seat) { c.seat.occupied = false; c.seat.cust = null; c.seat = null; }
+        c.state = 'leaving';
+      }
+    } else if (c.state === 'leaving') {
+      moveToward(c, ENTRANCE.x, ENTRANCE.y, 95, dt);
+      if (dist(c.x, c.y, ENTRANCE.x, ENTRANCE.y) < 6) c.remove = true;
+    }
+  }
+  function moveToward(e, tx, ty, speed, dt) {
+    const dx = tx - e.x, dy = ty - e.y, d = Math.hypot(dx, dy);
+    if (d < 0.5) return;
+    const step = Math.min(d, speed * dt);
+    e.x += (dx / d) * step; e.y += (dy / d) * step;
+  }
+  function moveEntity(e, tx, ty, dt) {
+    const dx = tx - e.x, dy = ty - e.y, d = Math.hypot(dx, dy);
+    if (d < 1) return true;
+    const step = Math.min(d, e.speed * dt);
+    let nx = e.x + (dx / d) * step, ny = e.y + (dy / d) * step;
+    nx = clamp(nx, 28, W - 28); ny = clamp(ny, 180, H - 18);
+    for (const t of TABLES) {
+      const dd = dist(nx, ny, t.x, t.y), min = t.r + e.r - 2;
+      if (dd < min && dd > 0) { const a = Math.atan2(ny - t.y, nx - t.x); nx = t.x + Math.cos(a) * min; ny = t.y + Math.sin(a) * min; }
+    }
+    if (nx > PICKUP.x - 6 && nx < PICKUP.x + PICKUP.w + 6 && ny < PICKUP.y + PICKUP.h + 6) ny = Math.max(ny, PICKUP.y + PICKUP.h + 8);
+    e.x = nx; e.y = ny;
+    return false;
+  }
+
+  /* ---------- oven ---------- */
+  function updateOven(dt) {
+    for (const s of oven().slots) {
+      if (s.baking) {
+        s.timer += dt;
+        if (s.timer >= BAKE_DUR) { s.baking = false; s.done = true; if (s.pizza) s.pizza.baked = true; SND.done(); }
+      }
+    }
+  }
+
+  /* ---------- waiters ---------- */
+  function hireWaiter(type) {
+    const fast = type === 'fast';
+    const cost = fast ? FAST_WAITER_COST : WAITER_COST;
+    if (state.cash < cost) return;
+    state.cash -= cost;
+    const base = state.player.speed / 2;
+    const w = {
+      id: ++waiterSeq, x: ENTRANCE.x, y: ENTRANCE.y, r: 13,
+      speed: base * (fast ? 1.3 : 1), fast,
+      hands: [null, null], state: 'enter', targetSlot: -1, targetCust: null, targetTrash: null,
+      timer: WAITER_DURATION, walk: 0,
+    };
+    state.waiters.push(w); SND.hire();
+  }
+
+  // central, single pizza-assignment path: nearest eligible free waiter per ready slot
+  function assignJobs() {
+    const ov = oven();
+    for (let i = 0; i < ov.slots.length; i++) {
+      const s = ov.slots[i];
+      if (!(s.pizza && s.done && s.claimedBy === null)) continue;
+      let best = null, bd = 1e9;
+      for (const w of state.waiters) {
+        if (w.remove || w.state !== 'seek') continue;
+        if (hasFreeHand(w) < 0) continue;
+        const d = dist(w.x, w.y, ov.use.x, ov.use.y);
+        if (d < bd) { bd = d; best = w; }
+      }
+      if (best) { s.claimedBy = best.id; best.targetSlot = i; best.state = 'tooven'; }
+    }
+  }
+
+  function pickWaiterJob(w, dt) {
+    if (carriedPizzaHand(w) >= 0) { w.state = 'tocust'; return; }     // service: deliver pizza
+    if (carriedTrashHand(w) >= 0) { w.state = 'tobin'; return; }      // bin carried trash
+    if (hasFreeHand(w) >= 0 && state.trash.some((t) => t.claimedBy === null)) { w.state = 'totrash'; return; }
+    moveEntity(w, 660, 250, dt); // idle near oven
+  }
+
+  function updateWaiter(w, dt) {
+    w.walk += dt * 6;
+    if (w.state !== 'leave') { w.timer -= dt; if (w.timer <= 0) { w.timer = 0; w.state = 'leave'; } }
+
+    if (w.state === 'enter') { if (moveEntity(w, 660, 250, dt)) w.state = 'seek'; return; }
+
+    if (w.state === 'leave') {
+      // release any oven slot claim so assignJobs can reassign it
+      if (w.targetSlot >= 0) { const s = oven().slots[w.targetSlot]; if (s && s.claimedBy === w.id) s.claimedBy = null; w.targetSlot = -1; }
+      // return any carried items before leaving
+      if (w.hands.some((h) => h)) {
+        for (let i = 0; i < w.hands.length; i++) {
+          const h = w.hands[i];
+          if (!h) continue;
+          if (h.t === 'pizza') returnPizzaToOven(h.pz);
+          else state.trash.push({ x: w.x, y: w.y + 6, claimedBy: null });
+          w.hands[i] = null;
+        }
+      }
+      if (w.targetCust && w.targetCust.claimedBy === w.id) w.targetCust.claimedBy = null;
+      if (w.targetTrash && w.targetTrash.claimedBy === w.id) w.targetTrash.claimedBy = null;
+      if (moveEntity(w, ENTRANCE.x, ENTRANCE.y, dt)) w.remove = true;
+      return;
+    }
+
+    if (w.state === 'tooven') {
+      const ov = oven(); const s = ov.slots[w.targetSlot];
+      if (!s || !s.pizza || !s.done || s.claimedBy !== w.id) { w.targetSlot = -1; w.state = 'seek'; return; }
+      if (moveEntity(w, ov.use.x, ov.use.y, dt)) {
+        const pz = takeReadyOvenSlot(w.targetSlot, w.id);
+        if (pz) { const fh = hasFreeHand(w); if (fh >= 0) w.hands[fh] = { t: 'pizza', pz }; SND.done(); }
+        w.targetSlot = -1; w.state = 'seek';
+      }
+      return;
+    }
+
+    if (w.state === 'tocust') {
+      const ph = carriedPizzaHand(w);
+      if (ph < 0) { w.state = 'seek'; return; }
+      if (!w.targetCust || w.targetCust.state !== 'waiting' || w.targetCust.claimedBy !== w.id) {
+        if (w.targetCust && w.targetCust.claimedBy === w.id) w.targetCust.claimedBy = null;
+        const pick = mostImpatientUnclaimed();
+        if (!pick) { w.targetCust = null; moveEntity(w, 660, 250, dt); return; } // hold pizza, wait
+        pick.claimedBy = w.id; w.targetCust = pick;
+      }
+      const tgt = w.targetCust;
+      const arrived = moveEntity(w, tgt.x, tgt.y, dt) || dist(w.x, w.y, tgt.x, tgt.y) < 42;
+      if (arrived) {
+        if (tgt.state === 'waiting') deliverByWaiter(tgt, w, ph);
+        else if (tgt.claimedBy === w.id) tgt.claimedBy = null;
+        w.targetCust = null; w.state = 'seek';
+      }
+      return;
+    }
+
+    if (w.state === 'totrash') {
+      if (!w.targetTrash || !state.trash.includes(w.targetTrash) || w.targetTrash.claimedBy !== w.id) {
+        if (w.targetTrash && w.targetTrash.claimedBy === w.id) w.targetTrash.claimedBy = null;
+        const tp = nearestTrashUnclaimed();
+        if (!tp) { w.targetTrash = null; w.state = 'seek'; return; }
+        tp.claimedBy = w.id; w.targetTrash = tp;
+      }
+      const tp = w.targetTrash;
+      if (moveEntity(w, tp.x, tp.y, dt) || dist(w.x, w.y, tp.x, tp.y) < 40) {
+        const fh = hasFreeHand(w);
+        if (fh >= 0) w.hands[fh] = { t: 'trash' };
+        const idx = state.trash.indexOf(tp); if (idx >= 0) state.trash.splice(idx, 1);
+        w.targetTrash = null; w.state = 'seek';
+      }
+      return;
+    }
+
+    if (w.state === 'tobin') {
+      if (moveEntity(w, BIN.x, BIN.y, dt) || dist(w.x, w.y, BIN.x, BIN.y) < 46) {
+        for (let i = 0; i < w.hands.length; i++) if (w.hands[i] && w.hands[i].t === 'trash') w.hands[i] = null;
+        SND.bin(); w.state = 'seek';
+      }
+      return;
+    }
+
+    if (w.state === 'seek') { pickWaiterJob(w, dt); return; }
+  }
+
+  /* ---------- chefs ---------- */
+  function hireChef() {
+    if (state.cash < CHEF_COST) return;
+    state.cash -= CHEF_COST;
+    state.chefs.push({
+      id: ++chefSeq, x: ENTRANCE.x, y: ENTRANCE.y, r: 13, speed: state.player.speed * 0.8,
+      hands: [null, null], state: 'enter', action: null, pending: null, targetSlot: -1, handSlot: -1,
+      timer: CHEF_DURATION, walk: 0,
+    });
+    SND.hire();
+  }
+  // chef picks its next task each frame while in 'seekwork'
+  function chefNext(chef) {
+    const ov = oven();
+    const ovenFull = ov.slots.every((s) => s.pizza);
+    const readyHand = chef.hands.findIndex((h) => h && h.t === 'pizza' && pizzaReadyToBake(h.pz));
+    if (readyHand >= 0) {
+      const freeOven = ov.slots.findIndex((s) => !s.pizza);
+      if (freeOven >= 0) { chef.state = 'tooven'; chef.targetSlot = freeOven; chef.handSlot = readyHand; return; }
+      return; // oven full: hold the ready pizza and wait
+    }
+    if (ovenFull) return; // both ovens busy: stop until a slot frees
+    const wipHand = chef.hands.findIndex((h) => h && h.t === 'pizza' && !pizzaReadyToBake(h.pz));
+    if (wipHand >= 0) {
+      const nx = nextActionForPizza(chef.hands[wipHand].pz);
+      if (nx) { chef.state = 'toprep'; chef.pending = { type: 'add', handIdx: wipHand, ingId: nx.ing.id, label: nx.action, dur: nx.ing.dur }; return; }
+    }
+    const freeHand = chef.hands.findIndex((h) => !h);
+    if (freeHand >= 0) { chef.state = 'toprep'; chef.pending = { type: 'knead', handIdx: freeHand, label: 'Knead dough', dur: KNEAD_DUR }; return; }
+  }
+  function startChefPrep(chef) {
+    const p = chef.pending; chef.pending = null;
+    if (!p) { chef.state = 'seekwork'; return; }
+    const dur = p.dur * 1.2; // 20% slower than the player
+    if (p.type === 'knead') {
+      chef.action = { label: p.label, duration: dur, elapsed: 0, onComplete: () => { chef.hands[p.handIdx] = { t: 'pizza', pz: newPizza('dough') }; SND.done(); } };
+    } else {
+      const idx = p.handIdx, id = p.ingId;
+      chef.action = { label: p.label, duration: dur, elapsed: 0, onComplete: () => { if (chef.hands[idx] && chef.hands[idx].pz) chef.hands[idx].pz.added.add(id); SND.done(); } };
+    }
+    chef.state = 'prepping';
+  }
+  function placeChefPizza(chef) {
+    const s = oven().slots[chef.targetSlot];
+    if (s && !s.pizza && chef.hands[chef.handSlot] && chef.hands[chef.handSlot].t === 'pizza') {
+      s.pizza = chef.hands[chef.handSlot].pz; s.baking = true; s.done = false; s.timer = 0; s.claimedBy = null;
+      chef.hands[chef.handSlot] = null; SND.step();
+    }
+    chef.targetSlot = -1; chef.handSlot = -1;
+  }
+  function updateChef(chef, dt) {
+    chef.walk += dt * 6;
+    if (chef.state !== 'leave') { chef.timer -= dt; if (chef.timer <= 0) { chef.timer = 0; chef.state = 'leave'; } }
+    if (chef.state === 'enter') { if (moveEntity(chef, prep().use.x, 250, dt)) chef.state = 'seekwork'; return; }
+    if (chef.state === 'leave') {
+      for (let i = 0; i < chef.hands.length; i++) { const h = chef.hands[i]; if (h && h.t === 'pizza') { if (pizzaReadyToBake(h.pz)) returnPizzaToOven(h.pz); chef.hands[i] = null; } }
+      if (chef.action) chef.action = null; if (chef.pending) chef.pending = null;
+      if (moveEntity(chef, ENTRANCE.x, ENTRANCE.y, dt)) chef.remove = true;
+      return;
+    }
+    if (chef.state === 'prepping') {
+      chef.action.elapsed += dt;
+      if (chef.action.elapsed >= chef.action.duration) { const cb = chef.action.onComplete; chef.action = null; chef.state = 'seekwork'; cb && cb(); }
+      return;
+    }
+    if (chef.state === 'toprep') { if (moveEntity(chef, prep().use.x, prep().use.y, dt)) startChefPrep(chef); return; }
+    if (chef.state === 'tooven') { if (moveEntity(chef, oven().use.x, oven().use.y, dt)) { placeChefPizza(chef); chef.state = 'seekwork'; } return; }
+    if (chef.state === 'seekwork') { chefNext(chef); if (chef.state === 'seekwork') moveEntity(chef, prep().use.x, 250, dt); return; }
+  }
+
+  /* ---------- player update ---------- */
+  function updatePlayer(dt) {
+    const p = state.player;
+    if (p.action) {
+      p.action.elapsed += dt;
+      if (p.action.elapsed >= p.action.duration) { const cb = p.action.onComplete; p.action = null; cb && cb(); }
+      return;
+    }
+    let vx = 0, vy = 0;
+    if (Input.keys['KeyA'] || Input.keys['ArrowLeft']) vx -= 1;
+    if (Input.keys['KeyD'] || Input.keys['ArrowRight']) vx += 1;
+    if (Input.keys['KeyW'] || Input.keys['ArrowUp']) vy -= 1;
+    if (Input.keys['KeyS'] || Input.keys['ArrowDown']) vy += 1;
+    const moving = vx || vy;
+    if (moving) {
+      const m = Math.hypot(vx, vy); vx /= m; vy /= m;
+      if (vx < 0) p.dir = -1; else if (vx > 0) p.dir = 1;
+      let nx = p.x + vx * p.speed * dt, ny = p.y + vy * p.speed * dt;
+      nx = clamp(nx, 28, W - 28); ny = clamp(ny, 180, H - 18);
+      for (const t of TABLES) {
+        const d = dist(nx, ny, t.x, t.y), min = t.r + p.r - 2;
+        if (d < min && d > 0) { const a = Math.atan2(ny - t.y, nx - t.x); nx = t.x + Math.cos(a) * min; ny = t.y + Math.sin(a) * min; }
+      }
+      if (nx > PICKUP.x - 6 && nx < PICKUP.x + PICKUP.w + 6 && ny < PICKUP.y + PICKUP.h + 6) ny = Math.max(ny, PICKUP.y + PICKUP.h + 8);
+      p.x = nx; p.y = ny; p.walk += dt * 10;
+      if (Math.floor(p.walk) !== Math.floor(p.walk - dt * 10)) SND.step();
+    }
+    if (Input.pressed['KeyE'] || Input.pressed['Space']) tryInteract();
+  }
+
+  /* ---------- rendering ---------- */
+  function drawFloor() {
+    const ts = 48;
+    for (let y = 0; y < H; y += ts) for (let x = 0; x < W; x += ts) {
+      ctx.fillStyle = (((x / ts) + (y / ts)) | 0) % 2 ? C.floor1 : C.floor2; ctx.fillRect(x, y, ts, ts);
+    }
+    ctx.fillStyle = C.wall; ctx.fillRect(0, 0, W, 60);
+    ctx.fillStyle = C.wallTrim; ctx.fillRect(0, 58, W, 5);
+    ctx.fillStyle = '#7a4a2e'; ctx.fillRect(ENTRANCE.x - 34, H - 14, 68, 14);
+    ctx.fillStyle = '#5e3722'; ctx.fillRect(ENTRANCE.x - 28, H - 11, 56, 8);
+  }
+  function roundRect(x, y, w, h, r) {
+    ctx.beginPath(); ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
+  }
+  function drawIngredient(name, cx, cy, r) {
+    if (name === 'dough') {
+      ctx.fillStyle = '#ead7a8'; ctx.beginPath(); ctx.arc(cx, cy, r, 0, 7); ctx.fill();
+      ctx.strokeStyle = '#cdb98a'; ctx.lineWidth = 2; ctx.stroke();
+    } else if (name === 'sauce') {
+      ctx.fillStyle = '#a52a20'; roundRect(cx - r, cy - r * 0.8, r * 2, r * 1.6, 4); ctx.fill();
+      ctx.fillStyle = C.sauce; ctx.beginPath(); ctx.arc(cx, cy + 1, r - 3, 0, 7); ctx.fill();
+    } else if (name === 'cheese') {
+      ctx.fillStyle = '#e6c12e'; ctx.beginPath(); ctx.arc(cx, cy, r, 0, 7); ctx.fill();
+      ctx.fillStyle = '#fff2a0';
+      ctx.beginPath(); ctx.arc(cx - 3, cy - 3, 2.6, 0, 7); ctx.fill();
+      ctx.beginPath(); ctx.arc(cx + 4, cy + 3, 2.6, 0, 7); ctx.fill();
+    }
+  }
+  function drawBin() {
+    // body
+    ctx.fillStyle = C.bin; roundRect(BIN.x - 13, BIN.y - 12, 26, 26, 4); ctx.fill();
+    ctx.fillStyle = C.binLid; roundRect(BIN.x - 15, BIN.y - 14, 30, 6, 3); ctx.fill();
+    // ribs
+    ctx.strokeStyle = 'rgba(0,0,0,0.25)'; ctx.lineWidth = 1.5;
+    for (let i = -1; i <= 1; i++) { ctx.beginPath(); ctx.moveTo(BIN.x - 11, BIN.y - 4 + i * 7); ctx.lineTo(BIN.x + 11, BIN.y - 4 + i * 7); ctx.stroke(); }
+    ctx.fillStyle = C.text; ctx.font = "700 9px 'Nunito', sans-serif"; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('Trash', BIN.x, BIN.y + 22);
+  }
+  function drawTrashPiles() {
+    for (const t of state.trash) {
+      ctx.fillStyle = 'rgba(0,0,0,0.12)'; ctx.beginPath(); ctx.ellipse(t.x, t.y + 3, 9, 3, 0, 0, 7); ctx.fill();
+      ctx.fillStyle = C.trash; roundRect(t.x - 7, t.y - 3, 9, 6, 2); ctx.fill();
+      ctx.fillStyle = C.trashPaper; roundRect(t.x + 1, t.y - 5, 7, 5, 2); ctx.fill();
+      ctx.fillStyle = '#cfc4a8'; ctx.beginPath(); ctx.arc(t.x - 2, t.y + 2, 2, 0, 7); ctx.fill();
+    }
+  }
+  function drawStation(s) {
+    const x = s.cx - s.w / 2, y = 70;
+    ctx.fillStyle = C.counter; roundRect(x, y, s.w, s.h, 10); ctx.fill();
+    ctx.fillStyle = C.counterTop; roundRect(x, y, s.w, 22, 10); ctx.fill(); ctx.fillRect(x, y + 8, s.w, 14);
+    ctx.fillStyle = s.id === 'oven' ? C.oven : '#f0e3c0';
+    roundRect(x + 10, y + 28, s.w - 20, s.h - 38, 8); ctx.fill();
+    ctx.fillStyle = C.text; ctx.font = "700 15px 'Nunito', sans-serif"; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(s.label, s.cx, y + 14);
+    if (s.id === 'prep') {
+      const atPrep = inStationRange(state.player, s);
+      INGREDIENTS.forEach((ing) => {
+        const addable = atPrep && !state.player.action && (
+          (ing.isBase && firstFreeHand() >= 0) || state.player.pizzas.some((pz) => canAddIngredient(pz, ing))
+        );
+        let canEver = true;
+        if (!ing.isBase) canEver = state.player.pizzas.some((pz) => pz && !pz.baked && ing.requires.every((r) => pz.added.has(r)) && !pz.added.has(ing.id));
+        if (addable) { ctx.fillStyle = 'rgba(255,255,255,0.35)'; ctx.beginPath(); ctx.arc(ing.iconX, ING_ICON_Y, 16, 0, 7); ctx.fill(); }
+        ctx.globalAlpha = (!ing.isBase && atPrep && !canEver && !addable) ? 0.4 : 1;
+        drawIngredient(ing.id, ing.iconX, ING_ICON_Y, 13);
+        ctx.globalAlpha = 1;
+      });
+    } else drawOvenSlots(s, y);
+  }
+  function drawOvenSlots(ov, y) {
+    const slotW = 66, slotH = 46, cy = y + 58;
+    ov.slots.forEach((s) => {
+      const cx = s.cx, sx = cx - slotW / 2, sy = cy - slotH / 2;
+      ctx.fillStyle = '#3a2517'; roundRect(sx, sy, slotW, slotH, 6); ctx.fill();
+      ctx.fillStyle = C.ovenMouth; ctx.globalAlpha = s.baking ? 0.85 : 0.25;
+      roundRect(sx + 5, sy + 5, slotW - 10, slotH - 10, 4); ctx.fill(); ctx.globalAlpha = 1;
+      if (s.pizza) {
+        drawPizza(cx, cy, pizzaStage(s.pizza), 1.0);
+        if (s.baking) {
+          const pct = s.timer / BAKE_DUR;
+          ctx.fillStyle = 'rgba(0,0,0,0.5)'; roundRect(sx + 6, sy + slotH - 8, slotW - 12, 4, 2); ctx.fill();
+          ctx.fillStyle = C.good; roundRect(sx + 6, sy + slotH - 8, (slotW - 12) * pct, 4, 2); ctx.fill();
+          ctx.fillStyle = 'rgba(255,255,255,0.25)';
+          for (let k = 0; k < 3; k++) { const t = (state.time * 1.5 + k * 0.4) % 1; ctx.globalAlpha = (1 - t) * 0.3; ctx.beginPath(); ctx.arc(cx + (k - 1) * 6, sy - t * 14, 3, 0, 7); ctx.fill(); }
+          ctx.globalAlpha = 1;
+        }
+        if (s.done) { ctx.strokeStyle = '#ffd9a0'; ctx.lineWidth = 2; ctx.globalAlpha = 0.6 + Math.sin(state.time * 6) * 0.3; ctx.beginPath(); ctx.arc(cx, cy, 17, 0, 7); ctx.stroke(); ctx.globalAlpha = 1; }
+      }
+    });
+  }
+  function drawTables() {
+    for (const t of TABLES) {
+      for (const s of t.seats) { ctx.fillStyle = s.occupied ? '#6b3f2c' : C.chair; roundRect(s.x - 11, s.y - 11, 22, 22, 5); ctx.fill(); }
+      ctx.fillStyle = C.table; ctx.beginPath(); ctx.arc(t.x, t.y, t.r, 0, 7); ctx.fill();
+      ctx.fillStyle = C.tableTop; ctx.beginPath(); ctx.arc(t.x, t.y, t.r - 6, 0, 7); ctx.fill();
+    }
+  }
+  function drawPickup() {
+    ctx.fillStyle = C.counter; roundRect(PICKUP.x, PICKUP.y, PICKUP.w, PICKUP.h, 8); ctx.fill();
+    ctx.fillStyle = C.counterTop; roundRect(PICKUP.x, PICKUP.y, PICKUP.w, 10, 8); ctx.fill();
+    ctx.fillStyle = C.text; ctx.font = "700 12px 'Nunito', sans-serif"; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('Pickup', PICKUP.x + PICKUP.w / 2, PICKUP.y + PICKUP.h / 2 + 2);
+  }
+  function drawPizza(cx, cy, stage, scale = 1) {
+    const r = 13 * scale;
+    if (stage === 'dough') {
+      ctx.fillStyle = C.pizzaDough; ctx.beginPath(); ctx.arc(cx, cy, r, 0, 7); ctx.fill();
+      ctx.strokeStyle = '#d9c290'; ctx.lineWidth = 1.5; ctx.stroke();
+    } else if (stage === 'sauce') {
+      ctx.fillStyle = C.pizzaDough; ctx.beginPath(); ctx.arc(cx, cy, r, 0, 7); ctx.fill();
+      ctx.fillStyle = C.pizzaSauce; ctx.beginPath(); ctx.arc(cx, cy, r - 3, 0, 7); ctx.fill();
+    } else if (stage === 'cheese') {
+      ctx.fillStyle = C.pizzaDough; ctx.beginPath(); ctx.arc(cx, cy, r, 0, 7); ctx.fill();
+      ctx.fillStyle = C.pizzaCheese; ctx.beginPath(); ctx.arc(cx, cy, r - 2.5, 0, 7); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.globalAlpha = 0.7;
+      ctx.beginPath(); ctx.arc(cx - 3, cy - 2, 1.6, 0, 7); ctx.fill();
+      ctx.beginPath(); ctx.arc(cx + 4, cy + 2, 1.6, 0, 7); ctx.fill(); ctx.globalAlpha = 1;
+    } else if (stage === 'baked') {
+      ctx.fillStyle = C.pizzaBaked; ctx.beginPath(); ctx.arc(cx, cy, r, 0, 7); ctx.fill();
+      ctx.fillStyle = '#d3543a'; ctx.beginPath(); ctx.arc(cx, cy, r - 3, 0, 7); ctx.fill();
+      ctx.fillStyle = '#f0d84a'; ctx.globalAlpha = 0.9;
+      ctx.beginPath(); ctx.arc(cx - 3, cy - 1, 2.4, 0, 7); ctx.fill();
+      ctx.beginPath(); ctx.arc(cx + 3, cy + 2, 2.4, 0, 7); ctx.fill(); ctx.globalAlpha = 1;
+    }
+  }
+  function drawTrashIcon(cx, cy) {
+    ctx.fillStyle = C.trash; roundRect(cx - 6, cy - 4, 9, 7, 2); ctx.fill();
+    ctx.fillStyle = C.trashPaper; roundRect(cx + 1, cy - 6, 6, 5, 2); ctx.fill();
+  }
+  function drawPerson(x, y, color, opts = {}) {
+    const bob = opts.bob ? Math.sin(opts.bob) * 1.4 : 0, bodyY = y + bob;
+    ctx.fillStyle = 'rgba(0,0,0,0.18)'; ctx.beginPath(); ctx.ellipse(x, y + 16, 12, 4, 0, 0, 7); ctx.fill();
+    ctx.fillStyle = color; roundRect(x - 10, bodyY - 2, 20, 18, 7); ctx.fill();
+    ctx.fillStyle = C.skin; ctx.beginPath(); ctx.arc(x, bodyY - 9, 8, 0, 7); ctx.fill();
+    if (opts.hat) { ctx.fillStyle = C.hat; ctx.beginPath(); ctx.arc(x, bodyY - 11, 9, Math.PI, 0); ctx.fill(); ctx.fillRect(x - 11, bodyY - 12, 22, 3); }
+  }
+  function drawPlayer() {
+    const p = state.player, acting = !!p.action;
+    drawPerson(p.x, p.y, C.player, { hat: true, bob: !acting ? p.walk : 0 });
+    ctx.fillStyle = C.apron; roundRect(p.x - 6, p.y + 1, 12, 11, 3); ctx.fill();
+    const carried = p.pizzas.filter(Boolean);
+    carried.forEach((pz, i) => { const off = carried.length === 1 ? 0 : i === 0 ? -9 : 9; drawPizza(p.x + p.dir * 4 + off, p.y - 16, pizzaStage(pz), 0.85); });
+    if (p.trash) drawTrashIcon(p.x - 12, p.y - 14);
+    if (p.action) {
+      const pct = p.action.elapsed / p.action.duration, bw = 52, bx = p.x - bw / 2, by = p.y - 44;
+      ctx.fillStyle = 'rgba(0,0,0,0.55)'; roundRect(bx - 2, by - 2, bw + 4, 12, 6); ctx.fill();
+      ctx.fillStyle = C.good; roundRect(bx, by, bw * pct, 8, 4); ctx.fill();
+      ctx.font = "700 11px 'Nunito', sans-serif"; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      const lw = ctx.measureText(p.action.label).width + 14, ly = by - 11;
+      ctx.fillStyle = 'rgba(36,26,18,0.92)'; roundRect(p.x - lw / 2, ly - 8, lw, 16, 8); ctx.fill();
+      ctx.fillStyle = C.textInv; ctx.fillText(p.action.label, p.x, ly);
+    }
+  }
+  function drawChef(chef) {
+    drawPerson(chef.x, chef.y, '#f2f2f2', { bob: chef.walk });
+    ctx.fillStyle = '#c0392b'; roundRect(chef.x - 6, chef.y - 2, 12, 4, 2); ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(chef.x - 7, chef.y - 15, 14, 3);
+    ctx.beginPath(); ctx.arc(chef.x, chef.y - 19, 7, Math.PI, 0); ctx.fill();
+    ctx.beginPath(); ctx.arc(chef.x - 5, chef.y - 18, 4, 0, 7); ctx.fill();
+    ctx.beginPath(); ctx.arc(chef.x + 5, chef.y - 18, 4, 0, 7); ctx.fill();
+    const carried = chef.hands.filter(Boolean);
+    carried.forEach((h, i) => { const off = carried.length === 1 ? 0 : i === 0 ? -9 : 9; const cx = chef.x + off, cy = chef.y - 26; ctx.fillStyle = C.tray; roundRect(cx - 10, cy - 3, 20, 6, 3); ctx.fill(); if (h.t === 'pizza') drawPizza(cx, cy - 6, pizzaStage(h.pz), 0.8); });
+    if (chef.action) {
+      const pct = chef.action.elapsed / chef.action.duration, bw = 52, bx = chef.x - bw / 2, by = chef.y - 44;
+      ctx.fillStyle = 'rgba(0,0,0,0.55)'; roundRect(bx - 2, by - 2, bw + 4, 12, 6); ctx.fill();
+      ctx.fillStyle = C.good; roundRect(bx, by, bw * pct, 8, 4); ctx.fill();
+      ctx.font = "700 11px 'Nunito', sans-serif"; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      const lw = ctx.measureText(chef.action.label).width + 14, ly = by - 11;
+      ctx.fillStyle = 'rgba(36,26,18,0.92)'; roundRect(chef.x - lw / 2, ly - 8, lw, 16, 8); ctx.fill();
+      ctx.fillStyle = C.textInv; ctx.fillText(chef.action.label, chef.x, ly);
+    }
+    const pct = clamp(chef.timer / CHEF_DURATION, 0, 1), bw = 24, bx = chef.x - bw / 2, by = chef.y + 18;
+    ctx.fillStyle = 'rgba(0,0,0,0.35)'; roundRect(bx, by, bw, 3, 2); ctx.fill();
+    ctx.fillStyle = pct > 0.33 ? C.good : pct > 0.15 ? '#e0a93a' : C.bad; roundRect(bx, by, bw * pct, 3, 2); ctx.fill();
+  }
+  function drawWaiter(w) {
+    drawPerson(w.x, w.y, w.fast ? C.waiterFast : C.waiter, { bob: w.walk });
+    ctx.fillStyle = C.waiterApron; roundRect(w.x - 6, w.y + 1, 12, 11, 3); ctx.fill();
+    ctx.fillStyle = '#2c2342'; roundRect(w.x - 5, w.y - 1, 10, 4, 2); ctx.fill();
+    if (w.fast) { ctx.fillStyle = '#ffd23f'; ctx.beginPath(); ctx.moveTo(w.x + 7, w.y - 14); ctx.lineTo(w.x + 13, w.y - 6); ctx.lineTo(w.x + 9, w.y - 6); ctx.lineTo(w.x + 12, w.y); ctx.lineTo(w.x + 5, w.y - 9); ctx.lineTo(w.x + 9, w.y - 9); ctx.closePath(); ctx.fill(); ctx.strokeStyle = '#b8860b'; ctx.lineWidth = 0.8; ctx.stroke(); }
+    const carried = w.hands.filter(Boolean);
+    carried.forEach((h, i) => {
+      const off = carried.length === 1 ? 0 : i === 0 ? -9 : 9;
+      const cx = w.x + off, cy = w.y - 26;
+      ctx.fillStyle = C.tray; roundRect(cx - 10, cy - 3, 20, 6, 3); ctx.fill();
+      if (h.t === 'pizza') drawPizza(cx, cy - 6, pizzaStage(h.pz), 0.8);
+      else drawTrashIcon(cx, cy - 8);
+    });
+    const pct = clamp(w.timer / WAITER_DURATION, 0, 1), bw = 24, bx = w.x - bw / 2, by = w.y + 18;
+    ctx.fillStyle = 'rgba(0,0,0,0.35)'; roundRect(bx, by, bw, 3, 2); ctx.fill();
+    ctx.fillStyle = pct > 0.33 ? C.good : pct > 0.15 ? '#e0a93a' : C.bad; roundRect(bx, by, bw * pct, 3, 2); ctx.fill();
+  }
+  function drawCustomer(c) {
+    drawPerson(c.x, c.y, c.color, { bob: c.state === 'waiting' ? c.bob : (c.state === 'entering' || c.state === 'leaving' ? c.bob * 2 : 0) });
+    if (c.state === 'waiting') {
+      const off = { n: { x: 0, y: -34 }, s: { x: 0, y: 34 }, e: { x: 42, y: 0 }, w: { x: -42, y: 0 } }[c.side] || { x: 0, y: -34 };
+      const bx = c.x + off.x, by = c.y + off.y;
+      const txt = c.takeaway ? 'Margherita · to go' : 'Margherita';
+      ctx.font = "800 10px 'Nunito', sans-serif"; const tw = ctx.measureText(txt).width + 14;
+      ctx.fillStyle = C.bubble; roundRect(bx - tw / 2, by - 11, tw, 20, 7); ctx.fill();
+      ctx.beginPath();
+      if (c.side === 'n') { ctx.moveTo(bx - 4, by + 8); ctx.lineTo(bx + 4, by + 8); ctx.lineTo(bx, by + 14); }
+      else if (c.side === 's') { ctx.moveTo(bx - 4, by - 8); ctx.lineTo(bx + 4, by - 8); ctx.lineTo(bx, by - 14); }
+      else if (c.side === 'e') { ctx.moveTo(bx - tw / 2, by - 4); ctx.lineTo(bx - tw / 2, by + 4); ctx.lineTo(bx - tw / 2 - 6, by); }
+      else { ctx.moveTo(bx + tw / 2, by - 4); ctx.lineTo(bx + tw / 2, by + 4); ctx.lineTo(bx + tw / 2 + 6, by); }
+      ctx.closePath(); ctx.fill();
+      ctx.fillStyle = C.text; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(txt, bx, by - 1);
+      const pct = clamp(c.patience / c.maxPatience, 0, 1);
+      const ry = c.y + (c.side === 'n' ? -22 : c.side === 's' ? 22 : 18);
+      ctx.fillStyle = 'rgba(0,0,0,0.3)'; roundRect(c.x - 14, ry, 28, 4, 2); ctx.fill();
+      ctx.fillStyle = pct > 0.4 ? C.good : C.bad; roundRect(c.x - 14, ry, 28 * pct, 4, 2); ctx.fill();
+    } else if (c.state === 'eating') {
+      ctx.fillStyle = C.good; ctx.font = "800 11px 'Nunito', sans-serif"; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('•••', c.x, c.y - 26);
+    } else if (c.state === 'paying') {
+      // floating green $ bill, rises + fades
+      const prog = 1 - clamp(c.payTimer / 1.3, 0, 1);
+      const fy = c.y - 24 - prog * 16;
+      ctx.globalAlpha = 1 - prog * 0.7;
+      ctx.fillStyle = C.money; roundRect(c.x - 9, fy - 7, 18, 14, 3); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.font = "800 11px 'Nunito', sans-serif"; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('$9', c.x, fy);
+      ctx.globalAlpha = 1;
+    }
+  }
+  function drawHUD() {
+    ctx.fillStyle = 'rgba(26,20,16,0.82)'; roundRect(12, 12, 230, 34, 8); ctx.fill();
+    ctx.fillStyle = C.textInv; ctx.font = "700 17px 'Fredoka', sans-serif"; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    ctx.fillText('you are not pizza', 24, 29);
+    ctx.fillStyle = 'rgba(26,20,16,0.82)'; roundRect(W - 138, 12, 126, 34, 8); ctx.fill();
+    ctx.fillStyle = '#ffd9a0'; ctx.font = "800 18px 'Nunito', sans-serif"; ctx.textAlign = 'right';
+    ctx.fillText('$' + state.cash, W - 24, 29);
+    const waiting = state.customers.filter((c) => c.state === 'waiting').length;
+    if (waiting > 0) {
+      ctx.fillStyle = 'rgba(26,20,16,0.82)'; roundRect(W / 2 - 56, 12, 112, 34, 8); ctx.fill();
+      ctx.fillStyle = C.textInv; ctx.font = "700 14px 'Nunito', sans-serif"; ctx.textAlign = 'center';
+      ctx.fillText('Orders: ' + waiting, W / 2, 29);
+    }
+  }
+  function drawContext() {
+    const c = getContext(); if (!c) return;
+    const p = state.player, y = p.y - 50;
+    ctx.font = "800 13px 'Nunito', sans-serif"; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    const w = ctx.measureText(c.text).width + 22;
+    ctx.fillStyle = c.ok === false ? 'rgba(60,40,24,0.6)' : 'rgba(124,179,66,0.92)'; roundRect(p.x - w / 2, y - 11, w, 22, 7); ctx.fill();
+    ctx.fillStyle = c.ok === false ? C.dim : C.textInv; ctx.fillText(c.text, p.x, y);
+  }
+
+  /* ---------- hire menu UI ---------- */
+  function syncHireUI() {
+    if (!hireBtn || !hireMenu) return;
+    const active = state.waiters.filter((w) => w.state !== 'leave').length
+                 + state.chefs.filter((c) => c.state !== 'leave').length;
+    hireBtn.textContent = 'Hire staff \u25BE' + (active > 0 ? '  (\u00D7' + active + ')' : '');
+    hireMenu.querySelectorAll('button').forEach((b) => {
+      const t = b.dataset.type;
+      const cost = t === 'chef' ? CHEF_COST : t === 'fast' ? FAST_WAITER_COST : WAITER_COST;
+      b.classList.toggle('off', state.cash < cost);
+    });
+  }
+  if (hireBtn) hireBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (!startScreen.classList.contains('hidden')) return;
+    hireMenu.classList.toggle('hidden');
+  });
+  if (hireMenu) hireMenu.querySelectorAll('button').forEach((b) => {
+    b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (b.dataset.type === 'chef') hireChef(); else hireWaiter(b.dataset.type);
+      hireMenu.classList.add('hidden');
+    });
+  });
+
+  /* ---------- main loop ---------- */
+  let last = 0;
+  function frame(t) {
+    const dt = Math.min(0.05, (t - last) / 1000 || 0);
+    last = t; state.time += dt;
+    update(dt); render(); Input.pressed = {};
+    requestAnimationFrame(frame);
+  }
+  function update(dt) {
+    updatePlayer(dt);
+    updateOven(dt);
+    assignJobs();
+    for (const w of state.waiters) updateWaiter(w, dt);
+    state.waiters = state.waiters.filter((w) => !w.remove);
+    for (const ch of state.chefs) updateChef(ch, dt);
+    state.chefs = state.chefs.filter((c) => !c.remove);
+    state.spawnTimer -= dt;
+    if (state.spawnTimer <= 0) { spawnCustomer(); state.spawnTimer = rand(7, 13); }
+    for (const c of state.customers) updateCustomer(c, dt);
+    state.customers = state.customers.filter((c) => !c.remove);
+    syncHireUI();
+  }
+  function render() {
+    drawFloor(); drawBin(); drawPickup(); drawTables(); drawTrashPiles();
+    for (const s of STATIONS) drawStation(s);
+    const people = [];
+    for (const c of state.customers) people.push({ y: c.y, d: () => drawCustomer(c) });
+    for (const w of state.waiters) people.push({ y: w.y, d: () => drawWaiter(w) });
+    for (const ch of state.chefs) people.push({ y: ch.y, d: () => drawChef(ch) });
+    people.push({ y: state.player.y, d: drawPlayer });
+    people.sort((a, b) => a.y - b.y).forEach((p) => p.d());
+    drawHUD(); drawContext();
+  }
+
+  /* ---------- start ---------- */
+  function start() {
+    if (audioCtx) return;
+    try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {}
+    startScreen.classList.add('hidden');
+    if (hireWrap) hireWrap.classList.remove('hidden');
+    last = performance.now(); requestAnimationFrame(frame);
+  }
+  startScreen.addEventListener('click', start);
+  startScreen.addEventListener('keydown', (e) => { if (e.code === 'Enter' || e.code === 'Space') { e.preventDefault(); start(); } });
+
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => {});
+})();
