@@ -384,7 +384,13 @@
     return best;
   }
   function mostUrgentDrinkCustomer(drinkId = null, ownerId = null) {
-    return nearestDrinkCustomer(480, 360, 1e9, drinkId, ownerId);
+    return state.customers
+      .filter((c) => {
+        const canReceive = c.state === 'waiting' || c.state === 'eating';
+        const claimAvailable = c.drinkClaimedBy === null || c.drinkClaimedBy === ownerId;
+        return canReceive && c.drinkId && !c.drinkDelivered && claimAvailable && (!drinkId || c.drinkId === drinkId);
+      })
+      .sort(compareCustomerUrgency)[0] || null;
   }
   function deliverDrink(c, carrier, ownerId = null) {
     if (!c || !c.drinkId || c.drinkDelivered || (c.state !== 'waiting' && c.state !== 'eating')) return false;
@@ -430,9 +436,23 @@
     let best = null;
     for (const c of state.customers) {
       if (c.state !== 'waiting' || c.pizzaDelivered || c.claimedBy !== null || (recipeId && c.recipeId !== recipeId)) continue;
-      if (!best || c.patience < best.patience) best = c;
+      if (!best || compareCustomerUrgency(c, best) < 0) best = c;
     }
     return best;
+  }
+  function compareCustomerUrgency(a, b) {
+    const aRed = a.enteredRed || a.patience / a.maxPatience <= 0.4;
+    const bRed = b.enteredRed || b.patience / b.maxPatience <= 0.4;
+    if (aRed !== bRed) return aRed ? -1 : 1;
+    const ratioDiff = a.patience / a.maxPatience - b.patience / b.maxPatience;
+    return Math.abs(ratioDiff) > 0.001 ? ratioDiff : a.patience - b.patience;
+  }
+  function preferredCustomerForPizza(pz) {
+    if (pz && pz.targetCustomerId !== null && pz.targetCustomerId !== undefined) {
+      const reserved = state.customers.find((c) => c.id === pz.targetCustomerId);
+      if (reserved && reserved.state === 'waiting' && !reserved.pizzaDelivered && reserved.claimedBy === null && reserved.recipeId === pizzaRecipeId(pz)) return reserved;
+    }
+    return mostImpatientUnclaimed(pizzaRecipeId(pz));
   }
   function nearestTrashUnclaimed() {
     let best = null, bd = 1e9;
@@ -541,6 +561,7 @@
     recordFirstService(c);
     c.pizzaServiceAt = c.serviceElapsed;
     c.pizzaDelivered = true;
+    c.chefOrderClaimedBy = null;
     advanceCompletedOrder(c);
   }
   function deliver(c, handIndex) {
@@ -758,7 +779,7 @@
       patience: (takeaway ? 42 : 55) * (hostActive ? 1.25 : 1),
       maxPatience: (takeaway ? 42 : 55) * (hostActive ? 1.25 : 1),
       eatTimer: 0, payTimer: 0, bob: Math.random() * 6, claimedBy: null,
-      drinkId, orderedDrink: !!drinkId, pizzaDelivered: false, drinkDelivered: false, drinkClaimedBy: null,
+      drinkId, orderedDrink: !!drinkId, pizzaDelivered: false, drinkDelivered: false, drinkClaimedBy: null, chefOrderClaimedBy: null,
       serviceElapsed: 0, firstServiceAt: null, pizzaServiceAt: Infinity,
       tipEligible: false, enteredRed: false, mood: null,
     };
@@ -865,9 +886,13 @@
   // central, single pizza-assignment path: nearest eligible free waiter per ready slot
   function assignJobs() {
     const ov = oven();
-    for (let i = 0; i < ov.slots.length; i++) {
-      const s = ov.slots[i];
-      if (!(s.pizza && s.done && s.claimedBy === null)) continue;
+    const readySlots = ov.slots.map((slot, index) => ({ slot, index })).filter(({ slot }) => slot.pizza && slot.done && slot.claimedBy === null);
+    readySlots.sort((a, b) => {
+      const ac = preferredCustomerForPizza(a.slot.pizza), bc = preferredCustomerForPizza(b.slot.pizza);
+      if (!ac) return 1; if (!bc) return -1;
+      return compareCustomerUrgency(ac, bc);
+    });
+    for (const { slot: s, index: i } of readySlots) {
       let best = null, bd = 1e9;
       for (const w of state.waiters) {
         if (w.remove || w.state !== 'seek' || w.drinksOnly) continue;
@@ -954,10 +979,9 @@
     if (w.state === 'tocust') {
       const ph = carriedPizzaHand(w);
       if (ph < 0) { w.state = 'seek'; return; }
-      if (!w.targetCust || w.targetCust.state !== 'waiting' || w.targetCust.claimedBy !== w.id) {
+      if (!w.targetCust || w.targetCust.state !== 'waiting' || w.targetCust.pizzaDelivered || w.targetCust.claimedBy !== w.id) {
         if (w.targetCust && w.targetCust.claimedBy === w.id) w.targetCust.claimedBy = null;
-        const carriedRecipe = pizzaRecipeId(w.hands[ph].pz);
-        const pick = mostImpatientUnclaimed(carriedRecipe);
+        const pick = preferredCustomerForPizza(w.hands[ph].pz);
         if (!pick) { w.targetCust = null; w.state = 'discard'; return; }
         pick.claimedBy = w.id; w.targetCust = pick;
       }
@@ -1096,6 +1120,24 @@
     });
     SND.hire();
   }
+  function chefOrderEstimateSeconds(recipeId, customer) {
+    const recipe = RECIPES[recipeId];
+    if (!recipe || !customer) return Infinity;
+    const prepSeconds = (kneadDuration() + recipe.ingredients.slice(1).reduce((sum, id) => sum + ING_MAP[id].dur, 0)) * 1.2;
+    const fastestWaiter = state.waiters.filter((w) => !w.remove && w.state !== 'leave' && !w.drinksOnly).reduce((speed, w) => Math.max(speed, w.speed), 0);
+    const deliverySpeed = Math.max(state.player.speed, fastestWaiter);
+    const deliverySeconds = dist(oven().use.x, oven().use.y, customer.x, customer.y) / deliverySpeed + 1.5;
+    return prepSeconds + bakeDuration() + deliverySeconds + 2;
+  }
+  function chefCanReachCustomer(customer) {
+    const patienceDrain = progress.jukebox ? 0.75 : 1;
+    return customer.patience / patienceDrain > chefOrderEstimateSeconds(customer.recipeId, customer);
+  }
+  function claimableChefCustomer() {
+    return state.customers
+      .filter((c) => c.state === 'waiting' && !c.pizzaDelivered && c.chefOrderClaimedBy === null && chefCanReachCustomer(c))
+      .sort(compareCustomerUrgency)[0] || null;
+  }
   // chef picks its next task each frame while in 'seekwork'
   function chefNext(chef) {
     const ov = oven();
@@ -1114,10 +1156,11 @@
     }
     const freeHand = chef.hands.findIndex((h) => !h);
     if (freeHand >= 0) {
-      const waiting = state.customers.filter((c) => c.state === 'waiting' && !c.pizzaDelivered);
-      const targetRecipeId = waiting.length ? waiting.sort((a, b) => a.patience - b.patience)[0].recipeId : unlockedRecipeIds()[(Math.random() * unlockedRecipeIds().length) | 0];
+      const target = claimableChefCustomer();
+      if (!target) return;
+      target.chefOrderClaimedBy = chef.id;
       chef.state = 'toprep';
-      chef.pending = { type: 'knead', handIdx: freeHand, recipeId: targetRecipeId, label: 'Knead dough', dur: kneadDuration() };
+      chef.pending = { type: 'knead', handIdx: freeHand, recipeId: target.recipeId, targetCustomerId: target.id, label: 'Knead ' + RECIPES[target.recipeId].name, dur: kneadDuration() };
       return;
     }
   }
@@ -1126,7 +1169,12 @@
     if (!p) { chef.state = 'seekwork'; return; }
     const dur = p.dur * 1.2; // 20% slower than the player
     if (p.type === 'knead') {
-      chef.action = { label: p.label, duration: dur, elapsed: 0, onComplete: () => { chef.hands[p.handIdx] = { t: 'pizza', pz: newPizza('dough', p.recipeId) }; SND.done(); } };
+      chef.action = { label: p.label, duration: dur, elapsed: 0, targetCustomerId: p.targetCustomerId, onComplete: () => {
+        const pizza = newPizza('dough', p.recipeId);
+        pizza.targetCustomerId = p.targetCustomerId;
+        chef.hands[p.handIdx] = { t: 'pizza', pz };
+        SND.done();
+      } };
     } else {
       const idx = p.handIdx, id = p.ingId;
       chef.action = { label: p.label, duration: dur, elapsed: 0, onComplete: () => { if (chef.hands[idx] && chef.hands[idx].pz) chef.hands[idx].pz.added.add(id); SND.done(); } };
@@ -1147,6 +1195,13 @@
       chef.timer -= dt;
       if (chef.timer <= 0) {
         chef.timer = 0;
+        const pendingCustomerId = chef.pending && chef.pending.targetCustomerId;
+        const actionCustomerId = chef.action && chef.action.targetCustomerId;
+        const customerId = pendingCustomerId !== undefined ? pendingCustomerId : actionCustomerId;
+        if (customerId !== undefined) {
+          const customer = state.customers.find((c) => c.id === customerId);
+          if (customer && customer.chefOrderClaimedBy === chef.id) customer.chefOrderClaimedBy = null;
+        }
         chef.state = 'leave';
         showStaffShiftNotice('chef');
         return;
