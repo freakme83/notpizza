@@ -10,6 +10,10 @@
   const hireWrap = document.getElementById('hireWrap');
   const gameControls = document.getElementById('gameControls');
   const pauseBtn = document.getElementById('pauseBtn');
+  const officeButtonTitle = document.getElementById('officeButtonTitle');
+  const officeButtonHint = document.getElementById('officeButtonHint');
+  const officeBadge = document.getElementById('officeBadge');
+  const upgradeNotice = document.getElementById('upgradeNotice');
   const restartBtn = document.getElementById('restartBtn');
   const pauseOverlay = document.getElementById('pauseOverlay');
   const staffNotice = document.getElementById('staffNotice');
@@ -133,6 +137,7 @@
   const freshShiftStats = () => ({ revenue: 0, tips: 0, wasteCosts: 0, staffCosts: 0, served: 0, lost: 0, totalWait: 0, dineIn: 0, takeaway: 0 });
   shift.stats = freshShiftStats();
   let hostActive = false, hostTimer = 0;
+  let officeHintShown = false, officeNoticeTimer = null;
   const unlockedRecipeIds = () => [...progress.unlockedRecipes];
   const availableIngredients = () => {
     const ids = new Set(unlockedRecipeIds().flatMap((id) => RECIPES[id].ingredients));
@@ -1657,7 +1662,7 @@
     shift.showingReport = true; Input.keys = {}; Input.pressed = {};
     hireMenu.classList.add('hidden'); hireWrap.classList.add('paused');
     pauseOverlay.classList.add('hidden');
-    pauseBtn.textContent = 'Pause';
+    updateOfficeButton(false, 0);
     paused = false;
     reportTitle.textContent = 'Chaos run report';
     const avgWait = shift.stats.served ? Math.round(shift.stats.totalWait / shift.stats.served) : 0;
@@ -1707,6 +1712,40 @@
       '<div><span>Cash on pause</span><strong>' + money(shift.shoppingStartCash) + '</strong></div>' +
       '<div><span>Spent this visit</span><strong>-' + money(spent) + '</strong></div>' +
       '<div><span>Cash remaining</span><strong>' + money(state.cash) + '</strong></div>';
+    syncOfficeCue();
+  }
+
+  function affordableOfficePurchases() {
+    let count = 0;
+    const doughCost = DOUGH_UPGRADE_COSTS[progress.doughLevel + 1];
+    const ovenCost = OVEN_UPGRADE_COSTS[progress.ovenLevel + 1];
+    if (doughCost && state.cash >= doughCost) count++;
+    if (ovenCost && state.cash >= ovenCost) count++;
+    if (!progress.sodaCabinet && state.cash >= 150) count++;
+    for (const id of Object.keys(RECIPES)) {
+      if (!progress.unlockedRecipes.has(id) && state.cash >= 60) count++;
+    }
+    return count;
+  }
+
+  function updateOfficeButton(isPaused = paused, available = affordableOfficePurchases()) {
+    officeButtonTitle.textContent = isPaused ? 'Resume game' : 'Office / Upgrades';
+    officeButtonHint.textContent = isPaused ? 'Back to chaos' : 'Pause game';
+    const showBadge = !isPaused && available > 0;
+    officeBadge.textContent = String(available);
+    officeBadge.classList.toggle('hidden', !showBadge);
+    pauseBtn.classList.toggle('upgrade-ready', showBadge);
+  }
+
+  function syncOfficeCue() {
+    const available = affordableOfficePurchases();
+    updateOfficeButton(paused, available);
+    if (!paused && available > 0 && !officeHintShown) {
+      officeHintShown = true;
+      upgradeNotice.classList.remove('hidden');
+      if (officeNoticeTimer) clearTimeout(officeNoticeTimer);
+      officeNoticeTimer = setTimeout(() => upgradeNotice.classList.add('hidden'), 5200);
+    }
   }
   doughUpgradeBtn.addEventListener('click', () => {
     const level = progress.doughLevel + 1;
@@ -1773,9 +1812,10 @@
     paused = nextPaused;
     Input.keys = {};
     Input.pressed = {};
-    pauseBtn.textContent = paused ? 'Resume' : 'Pause';
+    updateOfficeButton(paused);
     pauseBtn.setAttribute('aria-pressed', String(paused));
     pauseOverlay.classList.toggle('hidden', !paused);
+    upgradeNotice.classList.add('hidden');
     staffNotice.classList.add('hidden');
     if (paused) {
       shift.shoppingStartCash = Math.round(state.cash);
@@ -1812,6 +1852,7 @@
     updatePlayer(dt);
     syncIngredientDropdown();
     syncDrinkDropdown();
+    syncOfficeCue();
     updateOven(dt);
     assignJobs();
     for (const w of state.waiters) {
