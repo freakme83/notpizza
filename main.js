@@ -31,6 +31,12 @@
   const nextShiftBtn = document.getElementById('nextShiftBtn');
   const recipeButtons = [...document.querySelectorAll('.recipe-choice')];
   const W = 960, H = 620;
+  const PLAYER_SPRITE_CELL = 313;
+  const playerSprite = new Image();
+  let playerSpriteReady = false;
+  playerSprite.addEventListener('load', () => { playerSpriteReady = true; });
+  playerSprite.addEventListener('error', () => { playerSpriteReady = false; });
+  playerSprite.src = 'assets/player-sprite-sheet.png';
 
   /* ---------- palette (warm pizzeria) ---------- */
   const C = {
@@ -110,7 +116,7 @@
   let waiterSeq = 0, chefSeq = 0;
   const state = {
     cash: 0, served: 0,
-    player: { x: 480, y: 500, r: 15, speed: 195, pizzas: [null, null], drink: null, trash: [null, null], action: null, dir: 1, walk: 0 },
+    player: { x: 480, y: 500, r: 15, speed: 195, pizzas: [null, null], drink: null, trash: [null, null], action: null, dir: 1, walk: 0, moving: false },
     customers: [], waiters: [], chefs: [], trash: [],
     spawnTimer: 3.5, time: 0,
   };
@@ -1116,6 +1122,7 @@
   function updatePlayer(dt) {
     const p = state.player;
     if (p.action) {
+      p.moving = false;
       p.action.elapsed += dt;
       if (p.action.elapsed >= p.action.duration) { const cb = p.action.onComplete; p.action = null; cb && cb(); }
       return;
@@ -1126,6 +1133,7 @@
     if (Input.keys['KeyW'] || Input.keys['ArrowUp']) vy -= 1;
     if (Input.keys['KeyS'] || Input.keys['ArrowDown']) vy += 1;
     const moving = vx || vy;
+    p.moving = !!moving;
     if (moving) {
       const m = Math.hypot(vx, vy); vx /= m; vy /= m;
       if (vx < 0) p.dir = -1; else if (vx > 0) p.dir = 1;
@@ -1323,12 +1331,55 @@
     ctx.fillStyle = C.skin; ctx.beginPath(); ctx.arc(x, bodyY - 9, 8, 0, 7); ctx.fill();
     if (opts.hat) { ctx.fillStyle = C.hat; ctx.beginPath(); ctx.arc(x, bodyY - 11, 9, Math.PI, 0); ctx.fill(); ctx.fillRect(x - 11, bodyY - 12, 22, 3); }
   }
+  function playerSpritePose(p, carriedCount) {
+    if (p.action) {
+      const progress = clamp(p.action.elapsed / p.action.duration, 0, 0.999);
+      return { row: 3, frame: Math.floor(progress * 4) };
+    }
+    if (carriedCount) return { row: 2, frame: p.moving ? Math.floor(p.walk * 0.8) % 4 : 0 };
+    const frame = p.moving ? Math.floor(p.walk * 0.8) % 4 : Math.floor(state.time * 1.6) % 4;
+    return { row: p.moving ? 1 : 0, frame };
+  }
+  function drawPlayerSprite(p, carried) {
+    const pose = playerSpritePose(p, carried.length);
+    const size = 78;
+    ctx.fillStyle = 'rgba(0,0,0,0.18)';
+    ctx.beginPath(); ctx.ellipse(p.x, p.y + 16, 13, 4, 0, 0, 7); ctx.fill();
+    ctx.save();
+    ctx.translate(p.x, 0);
+    ctx.scale(p.dir, 1);
+    ctx.drawImage(
+      playerSprite,
+      pose.frame * PLAYER_SPRITE_CELL,
+      pose.row * PLAYER_SPRITE_CELL,
+      PLAYER_SPRITE_CELL,
+      PLAYER_SPRITE_CELL,
+      -size / 2,
+      p.y - 58,
+      size,
+      size
+    );
+    ctx.restore();
+
+    if (carried.length && !p.action) {
+      const trayX = p.x + p.dir * 13;
+      ctx.fillStyle = C.tray;
+      ctx.beginPath(); ctx.ellipse(trayX, p.y - 18, carried.length === 1 ? 14 : 18, 10, 0, 0, 7); ctx.fill();
+      carried.forEach((pz, i) => {
+        const off = carried.length === 1 ? 0 : i === 0 ? -7 : 7;
+        drawPizza(trayX + off, p.y - 20, pizzaStage(pz), carried.length === 1 ? 0.9 : 0.66);
+      });
+    }
+  }
   function drawPlayer() {
     const p = state.player, acting = !!p.action;
-    drawPerson(p.x, p.y, C.player, { hat: true, bob: !acting ? p.walk : 0 });
-    ctx.fillStyle = C.apron; roundRect(p.x - 6, p.y + 1, 12, 11, 3); ctx.fill();
     const carried = p.pizzas.filter(Boolean);
-    carried.forEach((pz, i) => { const off = carried.length === 1 ? 0 : i === 0 ? -9 : 9; drawPizza(p.x + p.dir * 4 + off, p.y - 16, pizzaStage(pz), 0.85); });
+    if (playerSpriteReady) drawPlayerSprite(p, carried);
+    else {
+      drawPerson(p.x, p.y, C.player, { hat: true, bob: !acting ? p.walk : 0 });
+      ctx.fillStyle = C.apron; roundRect(p.x - 6, p.y + 1, 12, 11, 3); ctx.fill();
+      carried.forEach((pz, i) => { const off = carried.length === 1 ? 0 : i === 0 ? -9 : 9; drawPizza(p.x + p.dir * 4 + off, p.y - 16, pizzaStage(pz), 0.85); });
+    }
     const carriedTrash = p.trash.filter(Boolean);
     carriedTrash.forEach((item, i) => {
       const offset = carriedTrash.length === 1 ? -12 : i === 0 ? -14 : 2;
@@ -1337,7 +1388,7 @@
     });
     if (p.drink) drawDrinkIcon(p.drink.id, p.x + 12, p.y - 16);
     if (p.action) {
-      const pct = p.action.elapsed / p.action.duration, bw = 52, bx = p.x - bw / 2, by = p.y - 44;
+      const pct = p.action.elapsed / p.action.duration, bw = 52, bx = p.x - bw / 2, by = p.y - (playerSpriteReady ? 70 : 44);
       ctx.fillStyle = 'rgba(0,0,0,0.55)'; roundRect(bx - 2, by - 2, bw + 4, 12, 6); ctx.fill();
       ctx.fillStyle = C.good; roundRect(bx, by, bw * pct, 8, 4); ctx.fill();
       ctx.font = "700 11px 'Inter', sans-serif"; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -1508,7 +1559,7 @@
   }
   function drawContext() {
     const c = getContext(); if (!c) return;
-    const p = state.player, y = p.y - 50;
+    const p = state.player, y = p.y - (playerSpriteReady ? 78 : 50);
     ctx.font = "800 13px 'Inter', sans-serif"; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     const w = ctx.measureText(c.text).width + 22;
     ctx.fillStyle = c.ok === false ? 'rgba(60,40,24,0.6)' : 'rgba(124,179,66,0.92)'; roundRect(p.x - w / 2, y - 11, w, 22, 7); ctx.fill();
