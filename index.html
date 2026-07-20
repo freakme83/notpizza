@@ -19,13 +19,21 @@
       <canvas id="game" width="960" height="620" aria-label="you are not pizza game"></canvas>
 
       <div id="gameControls" class="hidden" aria-label="Game controls">
-        <button id="pauseBtn" type="button" aria-pressed="false">Pause</button>
+        <button id="pauseBtn" type="button" aria-pressed="false">
+          <span class="office-button-copy"><strong id="officeButtonTitle">Office / Upgrades</strong><small id="officeButtonHint">Pause game</small></span>
+          <span id="officeBadge" class="office-badge hidden" aria-label="Available purchases">0</span>
+        </button>
         <button id="restartBtn" type="button">Restart</button>
       </div>
 
+      <div id="upgradeNotice" class="upgrade-notice hidden" role="status" aria-live="polite">
+        <strong>Upgrade available</strong>
+        <span>Open Office / Upgrades to improve your kitchen.</span>
+      </div>
+
       <div id="pauseOverlay" class="hidden" role="dialog" aria-modal="true" aria-labelledby="pauseTitle">
-        <strong id="pauseTitle">Paused · Restaurant office</strong>
-        <span>Spend carefully, then press P or Escape to return to the chaos.</span>
+        <strong id="pauseTitle">Restaurant Office</strong>
+        <span>The game is paused while you buy upgrades and unlock menu items. Press P or Escape to return.</span>
         <div id="staffNotice" class="staff-notice hidden" role="alert">
           <strong id="staffNoticeText">Shift of the waiter is over.</strong>
           <span>Currently assigned staff</span>
@@ -83,6 +91,6 @@
         <span>click to start</span>
       </div>
     </div>
-    <script src="main.js?v=station-prep-flow"></script>
+    <script src="main.js?v=office-upgrade-cue"></script>
   </body>
 </html>
