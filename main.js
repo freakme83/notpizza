@@ -472,7 +472,6 @@
     const pr = prep();
     if (inStationRange(p, pr)) {
       const r = prepRequirement(p.pizzas);
-      if (r.ok && !r.make) return Object.assign({ kind: 'prep-step', target: pr }, r, { text: 'E: ' + r.action });
       if (firstFreeHand() >= 0) return { kind: 'prep-menu', target: pr, ok: true, text: 'E: Start pizza' };
       return { kind: 'prep-step', target: pr, ok: false, text: r.hint || 'Hands full' };
     }
@@ -554,9 +553,6 @@
     const c = getContext();
     if (!c || c.ok === false) return;
     if (c.kind === 'prep-menu') toggleIngredientDropdown();
-    else if (c.kind === 'prep-step') {
-      p.action = { label: c.action, duration: c.dur, elapsed: 0, onComplete: () => applyPrep(c) };
-    }
     else if (c.kind === 'oven') ovenInteract(c);
     else if (c.kind === 'deliver') deliver(c.target, c.hand);
     else if (c.kind === 'deliver-drink') {
@@ -596,6 +592,28 @@
       }
     }
   }
+  function continuePlayerPizza(slot) {
+    const p = state.player;
+    const pizza = p.pizzas[slot];
+    if (!pizza || pizza.baked) return;
+    const next = nextActionForPizza(pizza);
+    if (!next) {
+      pizza.recipeId = recipeForPizza(pizza);
+      SND.done();
+      return;
+    }
+    p.action = {
+      label: next.action,
+      duration: next.ing.dur,
+      elapsed: 0,
+      onComplete: () => {
+        const current = p.pizzas[slot];
+        if (!current || current.baked) return;
+        current.added.add(next.ing.id);
+        continuePlayerPizza(slot);
+      }
+    };
+  }
   function startPlayerPizza(recipeId) {
     const p = state.player;
     if (p.action || !inStationRange(p, prep())) return;
@@ -606,7 +624,10 @@
       label: 'Knead ' + recipeName,
       duration: kneadDuration(),
       elapsed: 0,
-      onComplete: () => { p.pizzas[free] = newPizza('dough', recipeId); SND.done(); }
+      onComplete: () => {
+        p.pizzas[free] = newPizza('dough', recipeId);
+        continuePlayerPizza(free);
+      }
     };
   }
   const ingredientButtons = new Map();
