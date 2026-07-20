@@ -657,8 +657,9 @@
 
   function syncIngredientDropdown() {
     const atPrep = started && !paused && !shift.showingReport && inStationRange(state.player, prep());
-    ingredientDropdown.classList.toggle('available', atPrep);
-    if (!atPrep) {
+    const canStart = atPrep && !state.player.action && firstFreeHand() >= 0;
+    ingredientDropdown.classList.toggle('available', canStart);
+    if (!canStart) {
       ingredientOptions.classList.add('hidden');
       ingredientToggle.setAttribute('aria-expanded', 'false');
     }
@@ -670,7 +671,6 @@
       rebuildIngredientDropdown(recipeIds);
     }
 
-    const canStart = firstFreeHand() >= 0 && !state.player.action;
     for (const recipeId of recipeIds) {
       const button = ingredientButtons.get(recipeId);
       if (button) button.disabled = !canStart;
