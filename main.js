@@ -12,7 +12,9 @@
   const pauseBtn = document.getElementById('pauseBtn');
   const restartBtn = document.getElementById('restartBtn');
   const pauseOverlay = document.getElementById('pauseOverlay');
-  const pauseRecipes = document.getElementById('pauseRecipes');
+  const staffNotice = document.getElementById('staffNotice');
+  const staffNoticeText = document.getElementById('staffNoticeText');
+  const staffRoster = document.getElementById('staffRoster');
   const ingredientDropdown = document.getElementById('ingredientDropdown');
   const ingredientToggle = document.getElementById('ingredientToggle');
   const ingredientOptions = document.getElementById('ingredientOptions');
@@ -29,6 +31,12 @@
   const nextShiftBtn = document.getElementById('nextShiftBtn');
   const recipeButtons = [...document.querySelectorAll('.recipe-choice')];
   const W = 960, H = 620;
+  const PLAYER_SPRITE_CELL = 313;
+  const playerSprite = new Image();
+  let playerSpriteReady = false;
+  playerSprite.addEventListener('load', () => { playerSpriteReady = true; });
+  playerSprite.addEventListener('error', () => { playerSpriteReady = false; });
+  playerSprite.src = 'assets/player-sprite-sheet-v2.png';
 
   /* ---------- palette (warm pizzeria) ---------- */
   const C = {
@@ -72,8 +80,8 @@
   ];
   const ING_MAP = Object.fromEntries(INGREDIENTS.map((i) => [i.id, i]));
   const ING_ICON_Y = 126;
-  const WAITER_COST = 25, FAST_WAITER_COST = 35, DRINKS_WAITER_COST = 30, WAITER_DURATION = 300;
-  const CHEF_COST = 100, CHEF_DURATION = 300, HOST_COST = 40;
+  const WAITER_COST = 20, FAST_WAITER_COST = 25, DRINKS_WAITER_COST = 25, WAITER_DURATION = 420;
+  const CHEF_COST = 80, CHEF_DURATION = 420, HOST_COST = 30, HOST_DURATION = 420;
   const DRINKS = {
     coke: { name: 'Coke', price: 2, color: '#c0392b' },
     water: { name: 'Water', price: 1, color: '#70b7d8' },
@@ -81,7 +89,7 @@
   };
 
   // trash bin next to oven (just right of the oven counter)
-  const BIN = { x: 836, y: 252, r: 20 };
+  const BIN = { x: 836, y: 252, r: 20, count: 0, capacity: 20, claimedBy: null };
 
   const TABLES = [];
   [360, 620].forEach((tx, ti) => {
@@ -108,7 +116,7 @@
   let waiterSeq = 0, chefSeq = 0;
   const state = {
     cash: 0, served: 0,
-    player: { x: 480, y: 500, r: 15, speed: 195, pizzas: [null, null], drink: null, trash: [null, null], action: null, dir: 1, walk: 0 },
+    player: { x: 480, y: 500, r: 15, speed: 195, pizzas: [null, null], drink: null, trash: [null, null], action: null, dir: 1, walk: 0, moving: false },
     customers: [], waiters: [], chefs: [], trash: [],
     spawnTimer: 3.5, time: 0,
   };
@@ -117,12 +125,14 @@
     unlockedRecipes: new Set(['margherita']),
   };
   const shift = {
-    day: 1, elapsed: 0, orderCloseAt: 270, duration: 300,
-    phase: 'open', showingReport: false, recipeUnlockUsed: false, shoppingStartCash: 0, stats: null,
+    elapsed: 0, showingReport: false, shoppingStartCash: 0,
+    reputation: 50, peakReputation: 50, lowRepTimer: 0, lostStreak: 0,
+    serviceStreak: 0, bestServiceStreak: 0, repFlash: 0, repFlashTimer: 0,
+    stats: null,
   };
   const freshShiftStats = () => ({ revenue: 0, tips: 0, wasteCosts: 0, staffCosts: 0, served: 0, lost: 0, totalWait: 0, dineIn: 0, takeaway: 0 });
   shift.stats = freshShiftStats();
-  let hostActive = false;
+  let hostActive = false, hostTimer = 0;
   const unlockedRecipeIds = () => [...progress.unlockedRecipes];
   const availableIngredients = () => {
     const ids = new Set(unlockedRecipeIds().flatMap((id) => RECIPES[id].ingredients));
@@ -144,6 +154,36 @@
   const kneadDuration = () => BASE_KNEAD_DUR / speedMultiplier(progress.doughLevel);
   const bakeDuration = () => BASE_BAKE_DUR / speedMultiplier(progress.ovenLevel);
   const money = (value) => String.fromCharCode(36) + Math.round(value);
+  const clampReputation = (value) => clamp(Math.round(value), 0, 100);
+  function changeReputation(delta) {
+    if (!delta || shift.showingReport) return;
+    shift.reputation = clampReputation(shift.reputation + delta);
+    shift.peakReputation = Math.max(shift.peakReputation, shift.reputation);
+    shift.repFlash = delta;
+    shift.repFlashTimer = 1.8;
+    if (shift.reputation <= 0) showGameOver();
+  }
+  function recordSuccessfulVisit(c) {
+    let delta = 0;
+    if (c.pizzaServiceAt <= 25) delta += 2;
+    if (c.tipEligible) delta += 1;
+    delta += c.enteredRed ? -1 : 1;
+    if (c.orderedDrink && c.drinkDelivered) delta += 1;
+    shift.lostStreak = 0;
+    shift.serviceStreak++;
+    shift.bestServiceStreak = Math.max(shift.bestServiceStreak, shift.serviceStreak);
+    changeReputation(delta);
+  }
+  function recordLostVisit() {
+    shift.lostStreak++;
+    shift.serviceStreak = 0;
+    changeReputation(shift.lostStreak === 1 ? -6 : shift.lostStreak === 2 ? -8 : -10);
+  }
+  function formatRunTime(seconds) {
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60).toString().padStart(2, '0');
+    return mins + ':' + secs;
+  }
 
   /* ---------- input ---------- */
   const Input = { keys: {}, pressed: {} };
@@ -230,7 +270,34 @@
   const hasFreeHand = (w) => w.hands.findIndex((h) => !h);
   const carriedPizzaHand = (w) => w.hands.findIndex((h) => h && h.t === 'pizza');
   const carriedTrashHand = (w) => w.hands.findIndex((h) => h && h.t === 'trash');
+  const carriedBinBagHand = (w) => w.hands.findIndex((h) => h && h.t === 'binbag');
   const carriedDrinkHand = (w) => w.hands.findIndex((h) => h && h.t === 'drink');
+  const binIsFull = () => BIN.count >= BIN.capacity;
+  function depositPlayerTrash() {
+    const p = state.player;
+    for (let i = 0; i < p.trash.length && !binIsFull(); i++) {
+      if (!p.trash[i] || p.trash[i].t !== 'trash') continue;
+      p.trash[i] = null;
+      BIN.count++;
+      SND.bin();
+    }
+  }
+  function takeFullBinBag(handOwner, handIndex, ownerId = null) {
+    if (!binIsFull() || handIndex < 0 || (BIN.claimedBy !== null && BIN.claimedBy !== ownerId)) return false;
+    handOwner[handIndex] = { t: 'binbag' };
+    BIN.count = 0;
+    BIN.claimedBy = null;
+    SND.done();
+    return true;
+  }
+  function depositWaiterTrash(w) {
+    for (let i = 0; i < w.hands.length && !binIsFull(); i++) {
+      if (!w.hands[i] || w.hands[i].t !== 'trash') continue;
+      w.hands[i] = null;
+      BIN.count++;
+      SND.bin();
+    }
+  }
 
   /* ---------- interaction range ---------- */
   function inStationRange(p, s) {
@@ -273,7 +340,11 @@
     if (readyHand >= 0 && freeOven >= 0) return { ok: true, action: 'Bake', mode: 'place', oSlot: freeOven, hSlot: readyHand };
     const bakedOven = ov.slots.findIndex((s) => s.pizza && s.done);
     const freeHand = firstFreeHand();
-    if (bakedOven >= 0 && freeHand >= 0) return { ok: true, action: 'Collect', mode: 'collect', oSlot: bakedOven, hSlot: freeHand };
+    if (bakedOven >= 0 && freeHand >= 0) {
+      const recipeId = pizzaRecipeId(ov.slots[bakedOven].pizza);
+      const recipeName = RECIPES[recipeId] ? RECIPES[recipeId].name : 'Pizza';
+      return { ok: true, action: 'Collect ' + recipeName, mode: 'collect', oSlot: bakedOven, hSlot: freeHand };
+    }
     if (readyHand >= 0) return { ok: false, hint: 'oven full' };
     if (bakedOven >= 0) return { ok: false, hint: 'hands full' };
     if (ov.slots.some((s) => s.pizza && !s.done)) return { ok: false, hint: 'baking...' };
@@ -307,6 +378,11 @@
     if (!c || !c.drinkId || c.drinkDelivered || (c.state !== 'waiting' && c.state !== 'eating')) return false;
     if (!carrier || carrier.id !== c.drinkId) return false;
     if (ownerId === null) releaseWaiterAssignment(c.drinkClaimedBy, c, 'drink');
+    if (c.state === 'waiting') {
+      const missingPatience = Math.max(0, c.maxPatience - c.patience);
+      const patienceBoost = Math.round(clamp(c.maxPatience * 0.1 + missingPatience * 0.25, 5, 14));
+      c.patience = Math.min(c.maxPatience, c.patience + patienceBoost);
+    }
     recordFirstService(c);
     c.drinkDelivered = true;
     c.drinkClaimedBy = null;
@@ -368,6 +444,12 @@
       const drinkCustomer = nearestDrinkCustomer(p.x, p.y, DELIVER_RADIUS, p.drink.id, null, true);
       if (drinkCustomer) return { kind: 'deliver-drink', ok: true, text: 'E: Deliver ' + DRINKS[p.drink.id].name, target: drinkCustomer };
     }
+    if (inBinRange(p) && binIsFull()) {
+      const hand = p.trash.findIndex((item) => !item);
+      return hand >= 0
+        ? { kind: 'take-bin-bag', ok: true, text: 'E: Take full trash bag to door', hand }
+        : { kind: 'take-bin-bag', ok: false, text: 'Trash full · free a hand' };
+    }
     if (inBinRange(p) && (p.drink || p.pizzas.some(Boolean))) {
       const item = p.drink ? 'drink' : 'pizza';
       const loss = item === 'drink' ? 1 : 3;
@@ -390,7 +472,6 @@
     const pr = prep();
     if (inStationRange(p, pr)) {
       const r = prepRequirement(p.pizzas);
-      if (r.ok && !r.make) return Object.assign({ kind: 'prep-step', target: pr }, r, { text: 'E: ' + r.action });
       if (firstFreeHand() >= 0) return { kind: 'prep-menu', target: pr, ok: true, text: 'E: Start pizza' };
       return { kind: 'prep-step', target: pr, ok: false, text: r.hint || 'Hands full' };
     }
@@ -436,6 +517,7 @@
 
   function serveCustomer(c) {
     recordFirstService(c);
+    c.pizzaServiceAt = c.serviceElapsed;
     if (c.takeaway) {
       if (!c.drinkDelivered) { c.drinkId = null; c.drinkClaimedBy = null; }
       c.state = 'paying'; c.payTimer = 1.3;
@@ -471,15 +553,20 @@
     const c = getContext();
     if (!c || c.ok === false) return;
     if (c.kind === 'prep-menu') toggleIngredientDropdown();
-    else if (c.kind === 'prep-step') {
-      p.action = { label: c.action, duration: c.dur, elapsed: 0, onComplete: () => applyPrep(c) };
-    }
     else if (c.kind === 'oven') ovenInteract(c);
     else if (c.kind === 'deliver') deliver(c.target, c.hand);
     else if (c.kind === 'deliver-drink') {
       if (deliverDrink(c.target, p.drink)) p.drink = null;
     }
     else if (c.kind === 'drink-menu') toggleDrinkDropdown();
+    else if (c.kind === 'take-bin-bag') {
+      if (BIN.claimedBy !== null) {
+        const waiter = state.waiters.find((candidate) => candidate.id === BIN.claimedBy);
+        if (waiter && waiter.state === 'tofullbin') waiter.state = 'seek';
+        BIN.claimedBy = null;
+      }
+      takeFullBinBag(p.trash, c.hand);
+    }
     else if (c.kind === 'discard-held') {
       if (c.item === 'drink') { p.drink = null; state.cash -= 1; shift.stats.wasteCosts += 1; }
       else {
@@ -505,6 +592,28 @@
       }
     }
   }
+  function continuePlayerPizza(slot) {
+    const p = state.player;
+    const pizza = p.pizzas[slot];
+    if (!pizza || pizza.baked) return;
+    const next = nextActionForPizza(pizza);
+    if (!next) {
+      pizza.recipeId = recipeForPizza(pizza);
+      SND.done();
+      return;
+    }
+    p.action = {
+      label: next.action,
+      duration: next.ing.dur,
+      elapsed: 0,
+      onComplete: () => {
+        const current = p.pizzas[slot];
+        if (!current || current.baked) return;
+        current.added.add(next.ing.id);
+        continuePlayerPizza(slot);
+      }
+    };
+  }
   function startPlayerPizza(recipeId) {
     const p = state.player;
     if (p.action || !inStationRange(p, prep())) return;
@@ -515,7 +624,10 @@
       label: 'Knead ' + recipeName,
       duration: kneadDuration(),
       elapsed: 0,
-      onComplete: () => { p.pizzas[free] = newPizza('dough', recipeId); SND.done(); }
+      onComplete: () => {
+        p.pizzas[free] = newPizza('dough', recipeId);
+        continuePlayerPizza(free);
+      }
     };
   }
   const ingredientButtons = new Map();
@@ -627,8 +739,9 @@
       patience: (takeaway ? 42 : 55) * (hostActive ? 1.25 : 1),
       maxPatience: (takeaway ? 42 : 55) * (hostActive ? 1.25 : 1),
       eatTimer: 0, payTimer: 0, bob: Math.random() * 6, claimedBy: null,
-      drinkId, drinkDelivered: false, drinkClaimedBy: null,
-      serviceElapsed: 0, firstServiceAt: null, tipEligible: false, mood: null,
+      drinkId, orderedDrink: !!drinkId, drinkDelivered: false, drinkClaimedBy: null,
+      serviceElapsed: 0, firstServiceAt: null, pizzaServiceAt: Infinity,
+      tipEligible: false, enteredRed: false, mood: null,
     };
     seat.cust = c; state.customers.push(c);
   }
@@ -641,8 +754,10 @@
     } else if (c.state === 'waiting') {
       c.waitElapsed = (c.waitElapsed || 0) + dt;
       c.patience -= dt;
+      if (c.patience / c.maxPatience <= 0.4) c.enteredRed = true;
       if (c.patience <= 0) {
         c.state = 'leaving'; c.claimedBy = null; c.mood = 'angry'; shift.stats.lost++;
+        recordLostVisit();
         if (c.seat) { c.seat.occupied = false; c.seat.cust = null; c.seat = null; }
         SND.angry();
       }
@@ -661,6 +776,7 @@
         shift.stats.totalWait += c.waitElapsed || 0;
         if (c.takeaway) shift.stats.takeaway++; else shift.stats.dineIn++;
         if (!c.takeaway) spawnTrash(c.x, c.y, c.table ? c.table.id : null); SND.cash();
+        recordSuccessfulVisit(c);
         if (c.seat) { c.seat.occupied = false; c.seat.cust = null; c.seat = null; }
         c.state = 'leaving';
       }
@@ -722,6 +838,7 @@
     state.cash -= HOST_COST;
     shift.stats.staffCosts += HOST_COST;
     hostActive = true;
+    hostTimer = HOST_DURATION;
     SND.hire();
   }
 
@@ -745,6 +862,12 @@
   function pickWaiterJob(w, dt) {
     const drinkHand = carriedDrinkHand(w);
     if (!w.drinksOnly && carriedPizzaHand(w) >= 0) { w.state = 'tocust'; return; }
+    if (!w.drinksOnly && carriedBinBagHand(w) >= 0) { w.state = 'tobagdoor'; return; }
+    if (!w.drinksOnly && binIsFull() && BIN.claimedBy === null && hasFreeHand(w) >= 0) {
+      BIN.claimedBy = w.id;
+      w.state = 'tofullbin';
+      return;
+    }
     if (!w.drinksOnly && carriedTrashHand(w) >= 0 && hasFreeHand(w) >= 0 && state.trash.some((t) => t.claimedBy === null)) { w.state = 'totrash'; return; }
     if (!w.drinksOnly && carriedTrashHand(w) >= 0) { w.state = 'tobin'; return; }
     if (!w.drinksOnly && hasFreeHand(w) >= 0 && state.trash.some((t) => t.claimedBy === null)) { w.state = 'totrash'; return; }
@@ -763,7 +886,15 @@
 
   function updateWaiter(w, dt) {
     w.walk += dt * 6;
-    if (w.state !== 'leave') { w.timer -= dt; if (w.timer <= 0) { w.timer = 0; w.state = 'leave'; } }
+    if (w.state !== 'leave') {
+      w.timer -= dt;
+      if (w.timer <= 0) {
+        w.timer = 0;
+        w.state = 'leave';
+        showStaffShiftNotice(waiterRole(w));
+        return;
+      }
+    }
 
     if (w.state === 'enter') { if (moveEntity(w, 660, 250, dt)) w.state = 'seek'; return; }
 
@@ -784,7 +915,8 @@
       if (w.targetCust && w.targetCust.claimedBy === w.id) w.targetCust.claimedBy = null;
       if (w.targetTrash && w.targetTrash.claimedBy === w.id) w.targetTrash.claimedBy = null;
       if (w.targetDrinkCust && w.targetDrinkCust.drinkClaimedBy === w.id) w.targetDrinkCust.drinkClaimedBy = null;
-      if (moveEntity(w, ENTRANCE.x, ENTRANCE.y, dt)) w.remove = true;
+      if (BIN.claimedBy === w.id) BIN.claimedBy = null;
+      if (moveEntity(w, ENTRANCE.x, H - 18, dt)) w.remove = true;
       return;
     }
 
@@ -838,8 +970,33 @@
 
     if (w.state === 'tobin') {
       if (moveEntity(w, BIN.x, BIN.y, dt) || dist(w.x, w.y, BIN.x, BIN.y) < 46) {
-        for (let i = 0; i < w.hands.length; i++) if (w.hands[i] && w.hands[i].t === 'trash') w.hands[i] = null;
-        SND.bin(); w.state = 'seek';
+        depositWaiterTrash(w);
+        w.state = 'seek';
+      }
+      return;
+    }
+
+    if (w.state === 'tofullbin') {
+      if (!binIsFull() || (BIN.claimedBy !== null && BIN.claimedBy !== w.id)) {
+        if (BIN.claimedBy === w.id) BIN.claimedBy = null;
+        w.state = 'seek';
+        return;
+      }
+      if (moveEntity(w, BIN.x, BIN.y, dt) || dist(w.x, w.y, BIN.x, BIN.y) < 46) {
+        const hand = hasFreeHand(w);
+        if (hand >= 0 && takeFullBinBag(w.hands, hand, w.id)) w.state = 'tobagdoor';
+        else w.state = 'seek';
+      }
+      return;
+    }
+
+    if (w.state === 'tobagdoor') {
+      const hand = carriedBinBagHand(w);
+      if (hand < 0) { w.state = 'seek'; return; }
+      if (moveEntity(w, ENTRANCE.x, H - 18, dt)) {
+        w.hands[hand] = null;
+        SND.bin();
+        w.state = 'seek';
       }
       return;
     }
@@ -965,12 +1122,20 @@
   }
   function updateChef(chef, dt) {
     chef.walk += dt * 6;
-    if (chef.state !== 'leave') { chef.timer -= dt; if (chef.timer <= 0) { chef.timer = 0; chef.state = 'leave'; } }
+    if (chef.state !== 'leave') {
+      chef.timer -= dt;
+      if (chef.timer <= 0) {
+        chef.timer = 0;
+        chef.state = 'leave';
+        showStaffShiftNotice('chef');
+        return;
+      }
+    }
     if (chef.state === 'enter') { if (moveEntity(chef, prep().use.x, 250, dt)) chef.state = 'seekwork'; return; }
     if (chef.state === 'leave') {
       for (let i = 0; i < chef.hands.length; i++) { const h = chef.hands[i]; if (h && h.t === 'pizza') { if (pizzaReadyToBake(h.pz)) returnPizzaToOven(h.pz); chef.hands[i] = null; } }
       if (chef.action) chef.action = null; if (chef.pending) chef.pending = null;
-      if (moveEntity(chef, ENTRANCE.x, ENTRANCE.y, dt)) chef.remove = true;
+      if (moveEntity(chef, ENTRANCE.x, H - 18, dt)) chef.remove = true;
       return;
     }
     if (chef.state === 'prepping') {
@@ -987,6 +1152,7 @@
   function updatePlayer(dt) {
     const p = state.player;
     if (p.action) {
+      p.moving = false;
       p.action.elapsed += dt;
       if (p.action.elapsed >= p.action.duration) { const cb = p.action.onComplete; p.action = null; cb && cb(); }
       return;
@@ -997,6 +1163,7 @@
     if (Input.keys['KeyW'] || Input.keys['ArrowUp']) vy -= 1;
     if (Input.keys['KeyS'] || Input.keys['ArrowDown']) vy += 1;
     const moving = vx || vy;
+    p.moving = !!moving;
     if (moving) {
       const m = Math.hypot(vx, vy); vx /= m; vy /= m;
       if (vx < 0) p.dir = -1; else if (vx > 0) p.dir = 1;
@@ -1008,11 +1175,14 @@
       }
       if (nx > PICKUP.x - 6 && nx < PICKUP.x + PICKUP.w + 6 && ny > PICKUP.y - p.r - 6 && ny < PICKUP.y + PICKUP.h + p.r + 6) ny = p.y < PICKUP.y ? PICKUP.y - p.r - 6 : PICKUP.y + PICKUP.h + p.r + 6;
       p.x = nx; p.y = ny; p.walk += dt * 10;
-      if (Math.floor(p.walk) !== Math.floor(p.walk - dt * 10)) SND.step();
     }
-    if (inBinRange(p) && p.trash.some(Boolean)) {
-      p.trash = [null, null];
-      SND.bin();
+    if (inBinRange(p) && p.trash.some((item) => item && item.t === 'trash') && !binIsFull()) depositPlayerTrash();
+    if (dist(p.x, p.y, ENTRANCE.x, ENTRANCE.y) < 42) {
+      let removedBag = false;
+      for (let i = 0; i < p.trash.length; i++) {
+        if (p.trash[i] && p.trash[i].t === 'binbag') { p.trash[i] = null; removedBag = true; }
+      }
+      if (removedBag) SND.bin();
     }
     if (Input.pressed['KeyE'] || Input.pressed['Space']) tryInteract();
   }
@@ -1056,13 +1226,13 @@
   }
   function drawBin() {
     // body
-    ctx.fillStyle = C.bin; roundRect(BIN.x - 13, BIN.y - 12, 26, 26, 4); ctx.fill();
-    ctx.fillStyle = C.binLid; roundRect(BIN.x - 15, BIN.y - 14, 30, 6, 3); ctx.fill();
+    ctx.fillStyle = binIsFull() ? '#8f2f2a' : C.bin; roundRect(BIN.x - 13, BIN.y - 12, 26, 26, 4); ctx.fill();
+    ctx.fillStyle = binIsFull() ? '#c44b42' : C.binLid; roundRect(BIN.x - 15, BIN.y - 14, 30, 6, 3); ctx.fill();
     // ribs
     ctx.strokeStyle = 'rgba(0,0,0,0.25)'; ctx.lineWidth = 1.5;
     for (let i = -1; i <= 1; i++) { ctx.beginPath(); ctx.moveTo(BIN.x - 11, BIN.y - 4 + i * 7); ctx.lineTo(BIN.x + 11, BIN.y - 4 + i * 7); ctx.stroke(); }
     ctx.fillStyle = C.text; ctx.font = "700 9px 'Inter', sans-serif"; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText('Trash', BIN.x, BIN.y + 22);
+    ctx.fillText(binIsFull() ? 'FULL · TO DOOR' : 'Trash ' + BIN.count + '/' + BIN.capacity, BIN.x, BIN.y + 22);
   }
   function drawTrashPiles() {
     for (const t of state.trash) {
@@ -1177,6 +1347,12 @@
     ctx.fillStyle = C.trash; roundRect(cx - 6, cy - 4, 9, 7, 2); ctx.fill();
     ctx.fillStyle = C.trashPaper; roundRect(cx + 1, cy - 6, 6, 5, 2); ctx.fill();
   }
+  function drawBinBagIcon(cx, cy) {
+    ctx.fillStyle = '#302b28';
+    ctx.beginPath(); ctx.moveTo(cx - 8, cy + 7); ctx.lineTo(cx - 6, cy - 5); ctx.lineTo(cx - 2, cy - 9); ctx.lineTo(cx + 2, cy - 9); ctx.lineTo(cx + 6, cy - 5); ctx.lineTo(cx + 8, cy + 7); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = '#8f8176'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(cx - 3, cy - 8); ctx.lineTo(cx + 3, cy - 8); ctx.stroke();
+  }
   function drawPerson(x, y, color, opts = {}) {
     const bob = opts.bob ? Math.sin(opts.bob) * 1.4 : 0, bodyY = y + bob;
     ctx.fillStyle = 'rgba(0,0,0,0.18)'; ctx.beginPath(); ctx.ellipse(x, y + 16, 12, 4, 0, 0, 7); ctx.fill();
@@ -1184,20 +1360,59 @@
     ctx.fillStyle = C.skin; ctx.beginPath(); ctx.arc(x, bodyY - 9, 8, 0, 7); ctx.fill();
     if (opts.hat) { ctx.fillStyle = C.hat; ctx.beginPath(); ctx.arc(x, bodyY - 11, 9, Math.PI, 0); ctx.fill(); ctx.fillRect(x - 11, bodyY - 12, 22, 3); }
   }
+  function playerSpritePose(p) {
+    const frame = p.moving ? Math.floor(p.walk * 0.8) % 4 : Math.floor(state.time * 1.6) % 4;
+    return { row: p.moving ? 1 : 0, frame };
+  }
+  function drawPlayerSprite(p, carried) {
+    const pose = playerSpritePose(p);
+    const size = 78;
+    ctx.fillStyle = 'rgba(0,0,0,0.18)';
+    ctx.beginPath(); ctx.ellipse(p.x, p.y + 16, 13, 4, 0, 0, 7); ctx.fill();
+    ctx.save();
+    ctx.translate(p.x, 0);
+    ctx.scale(p.dir, 1);
+    ctx.drawImage(
+      playerSprite,
+      pose.frame * PLAYER_SPRITE_CELL,
+      pose.row * PLAYER_SPRITE_CELL,
+      PLAYER_SPRITE_CELL,
+      PLAYER_SPRITE_CELL,
+      -size / 2,
+      p.y - 58,
+      size,
+      size
+    );
+    ctx.restore();
+
+    if (carried.length && !p.action) {
+      const trayX = p.x + p.dir * 13;
+      ctx.fillStyle = C.tray;
+      ctx.beginPath(); ctx.ellipse(trayX, p.y - 18, carried.length === 1 ? 14 : 18, 10, 0, 0, 7); ctx.fill();
+      carried.forEach((pz, i) => {
+        const off = carried.length === 1 ? 0 : i === 0 ? -7 : 7;
+        drawPizza(trayX + off, p.y - 20, pizzaStage(pz), carried.length === 1 ? 0.9 : 0.66);
+      });
+    }
+  }
   function drawPlayer() {
     const p = state.player, acting = !!p.action;
-    drawPerson(p.x, p.y, C.player, { hat: true, bob: !acting ? p.walk : 0 });
-    ctx.fillStyle = C.apron; roundRect(p.x - 6, p.y + 1, 12, 11, 3); ctx.fill();
     const carried = p.pizzas.filter(Boolean);
-    carried.forEach((pz, i) => { const off = carried.length === 1 ? 0 : i === 0 ? -9 : 9; drawPizza(p.x + p.dir * 4 + off, p.y - 16, pizzaStage(pz), 0.85); });
+    if (playerSpriteReady) drawPlayerSprite(p, carried);
+    else {
+      drawPerson(p.x, p.y, C.player, { hat: true, bob: !acting ? p.walk : 0 });
+      ctx.fillStyle = C.apron; roundRect(p.x - 6, p.y + 1, 12, 11, 3); ctx.fill();
+      carried.forEach((pz, i) => { const off = carried.length === 1 ? 0 : i === 0 ? -9 : 9; drawPizza(p.x + p.dir * 4 + off, p.y - 16, pizzaStage(pz), 0.85); });
+    }
     const carriedTrash = p.trash.filter(Boolean);
     carriedTrash.forEach((item, i) => {
       const offset = carriedTrash.length === 1 ? -12 : i === 0 ? -14 : 2;
-      drawTrashIcon(p.x + offset, p.y - 14);
+      if (item.t === 'binbag') drawBinBagIcon(p.x + offset, p.y - 16);
+      else drawTrashIcon(p.x + offset, p.y - 14);
     });
     if (p.drink) drawDrinkIcon(p.drink.id, p.x + 12, p.y - 16);
     if (p.action) {
-      const pct = p.action.elapsed / p.action.duration, bw = 52, bx = p.x - bw / 2, by = p.y - 44;
+      const pct = p.action.elapsed / p.action.duration, bw = 52, bx = p.x - bw / 2, by = p.y - (playerSpriteReady ? 70 : 44);
       ctx.fillStyle = 'rgba(0,0,0,0.55)'; roundRect(bx - 2, by - 2, bw + 4, 12, 6); ctx.fill();
       ctx.fillStyle = C.good; roundRect(bx, by, bw * pct, 8, 4); ctx.fill();
       ctx.font = "700 11px 'Inter', sans-serif"; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -1247,6 +1462,7 @@
       ctx.fillStyle = C.tray; roundRect(cx - 10, cy - 3, 20, 6, 3); ctx.fill();
       if (h.t === 'pizza') drawPizza(cx, cy - 6, pizzaStage(h.pz), 0.8);
       else if (h.t === 'drink') drawDrinkIcon(h.id, cx, cy - 8);
+      else if (h.t === 'binbag') drawBinBagIcon(cx, cy - 8);
       else drawTrashIcon(cx, cy - 8);
     });
     const pct = clamp(w.timer / WAITER_DURATION, 0, 1), bw = 24, bx = w.x - bw / 2, by = w.y + 18;
@@ -1257,6 +1473,8 @@
       tocust: 'Serve pizza',
       tobin: 'Take trash out',
       totrash: 'Clear table',
+      tofullbin: 'Collect full bag',
+      tobagdoor: 'Bag to door',
       todrinkcust: 'Serve drink',
       todrinkcabinet: 'Get drink',
       discard: 'Discard item',
@@ -1335,24 +1553,37 @@
     ctx.fillStyle = 'rgba(26,20,16,0.82)'; roundRect(W - 138, 12, 126, 34, 8); ctx.fill();
     ctx.fillStyle = '#ffd9a0'; ctx.font = "800 18px 'Inter', sans-serif"; ctx.textAlign = 'right';
     ctx.fillText(money(state.cash), W - 24, 29);
-    const remaining = Math.max(0, shift.orderCloseAt - shift.elapsed);
-    const minutes = Math.floor(remaining / 60);
-    const seconds = Math.floor(remaining % 60).toString().padStart(2, '0');
     ctx.fillStyle = 'rgba(26,20,16,0.82)'; roundRect(12, 54, 230, 30, 8); ctx.fill();
     ctx.fillStyle = C.textInv; ctx.font = "700 13px 'Inter', sans-serif"; ctx.textAlign = 'left';
-    ctx.fillText('Day ' + shift.day + ' - ' + shift.phase.toUpperCase(), 24, 69);
+    ctx.fillText('REP ' + shift.reputation, 24, 69);
+    ctx.fillStyle = 'rgba(255,255,255,0.16)'; roundRect(78, 64, 82, 10, 5); ctx.fill();
+    ctx.fillStyle = shift.reputation > 40 ? C.good : shift.reputation > 20 ? '#e0a93a' : C.bad;
+    roundRect(78, 64, 82 * shift.reputation / 100, 10, 5); ctx.fill();
+    ctx.fillStyle = C.textInv;
     ctx.textAlign = 'right';
-    ctx.fillText(shift.elapsed < shift.orderCloseAt ? minutes + ':' + seconds : 'Finish orders', 230, 69);
+    ctx.fillText(formatRunTime(shift.elapsed), 230, 69);
+    if (shift.repFlashTimer > 0) {
+      ctx.globalAlpha = Math.min(1, shift.repFlashTimer);
+      ctx.fillStyle = shift.repFlash > 0 ? C.good : C.bad;
+      ctx.textAlign = 'left';
+      ctx.fillText((shift.repFlash > 0 ? '+' : '') + shift.repFlash, 166, 69);
+      ctx.globalAlpha = 1;
+    }
     const waiting = state.customers.filter((c) => c.state === 'waiting').length;
     if (waiting > 0) {
       ctx.fillStyle = 'rgba(26,20,16,0.82)'; roundRect(W / 2 - 56, 54, 112, 30, 8); ctx.fill();
       ctx.fillStyle = C.textInv; ctx.font = "700 13px 'Inter', sans-serif"; ctx.textAlign = 'center';
       ctx.fillText('Orders: ' + waiting, W / 2, 69);
     }
+    if (binIsFull()) {
+      ctx.fillStyle = 'rgba(173,45,39,0.94)'; roundRect(W / 2 - 118, 91, 236, 28, 8); ctx.fill();
+      ctx.fillStyle = C.textInv; ctx.font = "800 12px 'Inter', sans-serif"; ctx.textAlign = 'center';
+      ctx.fillText('TRASH FULL · TAKE BAG TO DOOR', W / 2, 105);
+    }
   }
   function drawContext() {
     const c = getContext(); if (!c) return;
-    const p = state.player, y = p.y - 50;
+    const p = state.player, y = p.y - (playerSpriteReady ? 78 : 50);
     ctx.font = "800 13px 'Inter', sans-serif"; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     const w = ctx.measureText(c.text).width + 22;
     ctx.fillStyle = c.ok === false ? 'rgba(60,40,24,0.6)' : 'rgba(124,179,66,0.92)'; roundRect(p.x - w / 2, y - 11, w, 22, 7); ctx.fill();
@@ -1388,38 +1619,63 @@
   });
 
 
-  /* ---------- shifts, reports, upgrades ---------- */
-  function shiftSpawnRange() {
-    const dayFactor = Math.max(0.65, 1 - (shift.day - 1) * 0.06);
-    if (shift.elapsed < 60) return [10 * dayFactor, 15 * dayFactor];
-    if (shift.elapsed < 210) return [5 * dayFactor, 9 * dayFactor];
-    return [3.8 * dayFactor, 7 * dayFactor];
+  /* ---------- endless chaos, reputation and upgrades ---------- */
+  function reputationSpawnRange() {
+    const rep = shift.reputation;
+    let range;
+    if (rep <= 20) range = [14, 18];
+    else if (rep <= 40) range = [10, 14];
+    else if (rep <= 60) range = [7, 11];
+    else if (rep <= 80) range = [5, 8];
+    else range = [3.5, 6];
+    const menuFactor = Math.max(0.8, 1 - (unlockedRecipeIds().length - 1) * 0.05);
+    return [range[0] * menuFactor, range[1] * menuFactor];
   }
-  function updateShift(dt) {
+  function updateChaos(dt) {
     shift.elapsed += dt;
-    shift.phase = shift.elapsed < 60 ? 'open' : shift.elapsed < 210 ? 'rush' : shift.elapsed < shift.orderCloseAt ? 'last call' : 'closing';
-    if (shift.elapsed >= shift.duration && state.customers.length === 0) showShiftReport();
+    shift.repFlashTimer = Math.max(0, shift.repFlashTimer - dt);
+    if (hostActive) {
+      hostTimer -= dt;
+      if (hostTimer <= 0) {
+        hostTimer = 0;
+        hostActive = false;
+        showStaffShiftNotice('host');
+      }
+    }
+    if (shift.reputation < 20) {
+      shift.lowRepTimer += dt;
+      if (shift.lowRepTimer >= 20) {
+        shift.lowRepTimer -= 20;
+        changeReputation(-1);
+      }
+    } else {
+      shift.lowRepTimer = 0;
+    }
   }
-  function showShiftReport() {
+  function showGameOver() {
     if (shift.showingReport) return;
     shift.showingReport = true; Input.keys = {}; Input.pressed = {};
     hireMenu.classList.add('hidden'); hireWrap.classList.add('paused');
-    reportTitle.textContent = 'Day ' + shift.day + ' report';
+    pauseOverlay.classList.add('hidden');
+    pauseBtn.textContent = 'Pause';
+    paused = false;
+    reportTitle.textContent = 'Chaos run report';
     const avgWait = shift.stats.served ? Math.round(shift.stats.totalWait / shift.stats.served) : 0;
     const net = Math.round(shift.stats.revenue + shift.stats.tips - shift.stats.staffCosts - shift.stats.wasteCosts);
     reportStats.innerHTML =
+      '<div><span>Time survived</span><strong>' + formatRunTime(shift.elapsed) + '</strong></div>' +
       '<div><span>Customers served</span><strong>' + shift.stats.served + '</strong></div>' +
       '<div><span>Customers lost</span><strong>' + shift.stats.lost + '</strong></div>' +
+      '<div><span>Peak reputation</span><strong>' + shift.peakReputation + '</strong></div>' +
+      '<div><span>Best service streak</span><strong>' + shift.bestServiceStreak + '</strong></div>' +
+      '<div><span>Recipes unlocked</span><strong>' + unlockedRecipeIds().length + '</strong></div>' +
       '<div><span>Revenue</span><strong>' + money(shift.stats.revenue) + '</strong></div>' +
       '<div><span>Staff costs</span><strong>-' + money(shift.stats.staffCosts) + '</strong></div>' +
       '<div><span>Waste</span><strong>-' + money(shift.stats.wasteCosts) + '</strong></div>' +
       '<div><span>Tips</span><strong>' + money(shift.stats.tips) + '</strong></div>' +
-      '<div><span>Net shift result</span><strong>' + (net < 0 ? '-' + money(Math.abs(net)) : money(net)) + '</strong></div>' +
+      '<div><span>Net run result</span><strong>' + (net < 0 ? '-' + money(Math.abs(net)) : money(net)) + '</strong></div>' +
       '<div><span>Average wait</span><strong>' + avgWait + 's</strong></div>';
-    shift.recipeUnlockUsed = false;
-    shift.shoppingStartCash = Math.round(state.cash);
-    refreshReportOptions();
-    nextShiftBtn.textContent = 'Start day ' + (shift.day + 1);
+    nextShiftBtn.textContent = 'Try again';
     shiftReport.classList.remove('hidden');
   }
   function refreshReportOptions() {
@@ -1448,8 +1704,8 @@
     });
     const spent = Math.max(0, shift.shoppingStartCash - Math.round(state.cash));
     shopBudget.innerHTML =
-      '<div><span>Shopping budget</span><strong>' + money(shift.shoppingStartCash) + '</strong></div>' +
-      '<div><span>Spent</span><strong>-' + money(spent) + '</strong></div>' +
+      '<div><span>Cash on pause</span><strong>' + money(shift.shoppingStartCash) + '</strong></div>' +
+      '<div><span>Spent this visit</span><strong>-' + money(spent) + '</strong></div>' +
       '<div><span>Cash remaining</span><strong>' + money(state.cash) + '</strong></div>';
   }
   doughUpgradeBtn.addEventListener('click', () => {
@@ -1478,36 +1734,52 @@
     progress.unlockedRecipes.add(id);
     refreshReportOptions();
   }));
-  function resetRestaurantForNextShift() {
-    state.customers = []; state.waiters = []; state.chefs = []; state.trash = []; state.spawnTimer = 2.5; hostActive = false;
-    state.player.x = 480; state.player.y = 500; state.player.pizzas = [null, null]; state.player.drink = null; state.player.trash = [null, null]; state.player.action = null;
-    for (const slot of oven().slots) { slot.pizza = null; slot.timer = 0; slot.baking = false; slot.done = false; slot.claimedBy = null; }
-    for (const table of TABLES) for (const seat of table.seats) { seat.occupied = false; seat.cust = null; }
-    for (const spot of TAKEAWAY_SPOTS) { spot.occupied = false; spot.cust = null; }
-  }
-  function startNextShift() {
-    shift.day++; shift.elapsed = 0; shift.phase = 'open'; shift.showingReport = false; shift.stats = freshShiftStats();
-    resetRestaurantForNextShift(); shiftReport.classList.add('hidden'); hireWrap.classList.remove('paused'); last = performance.now();
-  }
-  nextShiftBtn.addEventListener('click', startNextShift);
+  nextShiftBtn.addEventListener('click', () => window.location.reload());
 
   /* ---------- main loop ---------- */
   let last = 0;
   let started = false;
   let paused = false;
 
+  function waiterRole(waiter) {
+    return waiter.drinksOnly ? 'drinks runner' : waiter.fast ? 'fast waiter' : 'waiter';
+  }
+  function staffTime(seconds) {
+    const safe = Math.max(0, Math.ceil(seconds));
+    return Math.floor(safe / 60) + ':' + String(safe % 60).padStart(2, '0');
+  }
+  function refreshStaffRoster() {
+    const rows = [];
+    for (const waiter of state.waiters) {
+      if (waiter.remove || waiter.state === 'leave') continue;
+      rows.push('<div><span>' + waiterRole(waiter) + '</span><strong>' + staffTime(waiter.timer) + '</strong></div>');
+    }
+    for (const chef of state.chefs) {
+      if (chef.remove || chef.state === 'leave') continue;
+      rows.push('<div><span>chef</span><strong>' + staffTime(chef.timer) + '</strong></div>');
+    }
+    if (hostActive) rows.push('<div><span>host</span><strong>' + staffTime(hostTimer) + '</strong></div>');
+    staffRoster.innerHTML = rows.length ? rows.join('') : '<div class="empty-roster">No other staff on shift</div>';
+  }
+  function showStaffShiftNotice(role) {
+    setPaused(true);
+    staffNoticeText.textContent = 'Shift of the ' + role + ' is over.';
+    refreshStaffRoster();
+    staffNotice.classList.remove('hidden');
+  }
+
   function setPaused(nextPaused) {
-    if (!started || paused === nextPaused) return;
+    if (!started || shift.showingReport || paused === nextPaused) return;
     paused = nextPaused;
     Input.keys = {};
     Input.pressed = {};
     pauseBtn.textContent = paused ? 'Resume' : 'Pause';
     pauseBtn.setAttribute('aria-pressed', String(paused));
     pauseOverlay.classList.toggle('hidden', !paused);
+    staffNotice.classList.add('hidden');
     if (paused) {
-      pauseRecipes.innerHTML = '<strong>Recipes</strong>' + unlockedRecipeIds().map((id) =>
-        '<span>' + RECIPES[id].name + ': ' + RECIPES[id].ingredients.map((ingredient) => ING_MAP[ingredient].name).join(' → ') + ' · $' + RECIPES[id].price + '</span>'
-      ).join('');
+      shift.shoppingStartCash = Math.round(state.cash);
+      refreshReportOptions();
     }
     ingredientOptions.classList.add('hidden');
     hireWrap.classList.toggle('paused', paused);
@@ -1535,25 +1807,35 @@
     requestAnimationFrame(frame);
   }
   function update(dt) {
-    updateShift(dt);
+    updateChaos(dt);
+    if (shift.showingReport || paused) return;
     updatePlayer(dt);
     syncIngredientDropdown();
     syncDrinkDropdown();
     updateOven(dt);
     assignJobs();
-    for (const w of state.waiters) updateWaiter(w, dt);
-    state.waiters = state.waiters.filter((w) => !w.remove);
-    for (const ch of state.chefs) updateChef(ch, dt);
-    state.chefs = state.chefs.filter((c) => !c.remove);
-    if (shift.elapsed < shift.orderCloseAt) {
-      state.spawnTimer -= dt;
-      if (state.spawnTimer <= 0) {
-        spawnCustomer();
-        const range = shiftSpawnRange();
-        state.spawnTimer = rand(range[0], range[1]);
-      }
+    for (const w of state.waiters) {
+      updateWaiter(w, dt);
+      if (paused) break;
     }
-    for (const c of state.customers) updateCustomer(c, dt);
+    if (paused) { syncHireUI(); return; }
+    state.waiters = state.waiters.filter((w) => !w.remove);
+    for (const ch of state.chefs) {
+      updateChef(ch, dt);
+      if (paused) break;
+    }
+    if (paused) { syncHireUI(); return; }
+    state.chefs = state.chefs.filter((c) => !c.remove);
+    state.spawnTimer -= dt;
+    if (state.spawnTimer <= 0) {
+      spawnCustomer();
+      const range = reputationSpawnRange();
+      state.spawnTimer = rand(range[0], range[1]);
+    }
+    for (const c of state.customers) {
+      updateCustomer(c, dt);
+      if (shift.showingReport) break;
+    }
     state.customers = state.customers.filter((c) => !c.remove);
     syncHireUI();
   }

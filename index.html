@@ -12,6 +12,7 @@
       rel="stylesheet"
     />
     <link rel="stylesheet" href="styles.css" />
+    <link rel="preload" href="assets/player-sprite-sheet-v2.png" as="image" type="image/png" />
   </head>
   <body>
     <div id="wrap">
@@ -22,10 +23,28 @@
         <button id="restartBtn" type="button">Restart</button>
       </div>
 
-      <div id="pauseOverlay" class="hidden" role="status" aria-live="polite">
-        <strong>Paused</strong>
-        <span>Press P or Escape to continue</span>
-        <div id="pauseRecipes" class="pause-recipes"></div>
+      <div id="pauseOverlay" class="hidden" role="dialog" aria-modal="true" aria-labelledby="pauseTitle">
+        <strong id="pauseTitle">Paused · Restaurant office</strong>
+        <span>Spend carefully, then press P or Escape to return to the chaos.</span>
+        <div id="staffNotice" class="staff-notice hidden" role="alert">
+          <strong id="staffNoticeText">Shift of the waiter is over.</strong>
+          <span>Currently assigned staff</span>
+          <div id="staffRoster" class="staff-roster"></div>
+        </div>
+        <div id="shopBudget" class="shop-budget" aria-live="polite"></div>
+        <h3>Permanent upgrades</h3>
+        <div class="report-options">
+          <button id="doughUpgrade" class="option-card" type="button"><strong>Faster dough · Level 1</strong><span>Upgrade to Level 2</span></button>
+          <button id="ovenUpgrade" class="option-card" type="button"><strong>Faster oven · Level 1</strong><span>Upgrade to Level 2</span></button>
+          <button id="sodaUpgrade" class="option-card" type="button"><strong>Soda cabinet</strong><span>Permanent drinks service · $150</span></button>
+        </div>
+        <h3>Expand the menu</h3>
+        <p class="report-note">Recipes cost $60 each. Every extra recipe attracts 5% more customers.</p>
+        <div class="report-options recipe-options">
+          <button class="option-card recipe-choice" data-recipe="margherita" type="button">Margherita</button>
+          <button class="option-card recipe-choice" data-recipe="pepperoni" type="button">Unlock Pepperoni</button>
+          <button class="option-card recipe-choice" data-recipe="funghi" type="button">Unlock Funghi</button>
+        </div>
       </div>
 
       <div id="drinkDropdown" class="ingredient-dropdown drink-dropdown hidden" aria-label="Choose drink">
@@ -34,50 +53,36 @@
       </div>
 
       <div id="ingredientDropdown" class="ingredient-dropdown hidden" aria-label="Choose pizza recipe">
-        <button id="ingredientToggle" type="button" aria-expanded="false">New pizza ▾</button>
+        <button id="ingredientToggle" type="button" aria-expanded="false">Start pizza ▾</button>
         <div id="ingredientOptions" class="ingredient-options hidden"></div>
       </div>
 
       <section id="shiftReport" class="hidden" aria-labelledby="reportTitle">
         <div class="report-card">
-          <p class="eyebrow">SHIFT COMPLETE</p>
-          <h2 id="reportTitle">Day 1 report</h2>
+          <p class="eyebrow">RESTAURANT CLOSED</p>
+          <h2 id="reportTitle">Chaos run report</h2>
           <div id="reportStats" class="report-stats"></div>
-          <div id="shopBudget" class="shop-budget" aria-live="polite"></div>
-          <h3>Permanent upgrades</h3>
-          <div class="report-options">
-            <button id="doughUpgrade" class="option-card" type="button"><strong>Faster dough · Level 1</strong><span>Upgrade to Level 2</span></button>
-            <button id="ovenUpgrade" class="option-card" type="button"><strong>Faster oven · Level 1</strong><span>Upgrade to Level 2</span></button>
-            <button id="sodaUpgrade" class="option-card" type="button"><strong>Soda cabinet</strong><span>Permanent drinks service · $150</span></button>
-          </div>
-          <h3>Menu for the next shift</h3>
-          <p class="report-note">Unlock recipes permanently for $60 each. Customers choose randomly from your unlocked menu.</p>
-          <div class="report-options recipe-options">
-            <button class="option-card recipe-choice" data-recipe="margherita" type="button">Margherita</button>
-            <button class="option-card recipe-choice" data-recipe="pepperoni" type="button">Unlock Pepperoni</button>
-            <button class="option-card recipe-choice" data-recipe="funghi" type="button">Unlock Funghi</button>
-          </div>
-          <button id="nextShiftBtn" class="primary-action" type="button">Start day 2</button>
+          <button id="nextShiftBtn" class="primary-action" type="button">Try again</button>
         </div>
       </section>
 
       <div id="hireWrap" class="hidden">
         <div id="hireMenu" class="hidden" role="menu">
-          <button data-type="normal" role="menuitem">Waiter · $25</button>
-          <button data-type="fast" role="menuitem">Fast waiter · $35</button>
-          <button data-type="chef" role="menuitem">Chef · $100</button>
-          <button data-type="drinks" role="menuitem">Drinks runner · $30</button>
-          <button data-type="host" role="menuitem">Host · $40</button>
+          <button data-type="normal" role="menuitem">Waiter · $20</button>
+          <button data-type="fast" role="menuitem">Fast waiter · $25</button>
+          <button data-type="chef" role="menuitem">Chef · $80</button>
+          <button data-type="drinks" role="menuitem">Drinks runner · $25</button>
+          <button data-type="host" role="menuitem">Host · $30</button>
         </div>
         <button id="hireBtn" aria-haspopup="true">Hire waiter ▾</button>
       </div>
 
       <div id="start" role="button" tabindex="0">
         <h1>you are not pizza</h1>
-        <p>WASD / Arrows to move · E to act · click ingredients at Prep</p>
+        <p>WASD / Arrows to move · E to act · protect your reputation</p>
         <span>click to start</span>
       </div>
     </div>
-    <script src="main.js?v=phase12"></script>
+    <script src="main.js?v=station-prep-flow"></script>
   </body>
 </html>
