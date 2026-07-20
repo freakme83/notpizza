@@ -36,7 +36,7 @@
   let playerSpriteReady = false;
   playerSprite.addEventListener('load', () => { playerSpriteReady = true; });
   playerSprite.addEventListener('error', () => { playerSpriteReady = false; });
-  playerSprite.src = 'assets/player-sprite-sheet.png';
+  playerSprite.src = 'assets/player-sprite-sheet.png?v=transparent-bg';
 
   /* ---------- palette (warm pizzeria) ---------- */
   const C = {
