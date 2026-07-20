@@ -32,6 +32,8 @@
   const doughUpgradeBtn = document.getElementById('doughUpgrade');
   const ovenUpgradeBtn = document.getElementById('ovenUpgrade');
   const sodaUpgradeBtn = document.getElementById('sodaUpgrade');
+  const staffDiscountUpgradeBtn = document.getElementById('staffDiscountUpgrade');
+  const jukeboxUpgradeBtn = document.getElementById('jukeboxUpgrade');
   const nextShiftBtn = document.getElementById('nextShiftBtn');
   const recipeButtons = [...document.querySelectorAll('.recipe-choice')];
   const W = 960, H = 620;
@@ -69,9 +71,10 @@
   ];
   const BASE_KNEAD_DUR = 3.5, SAUCE_DUR = 1.5, CHEESE_DUR = 1.5, TOPPING_DUR = 1.2, BASE_BAKE_DUR = 4.5;
   const RECIPES = {
-    margherita: { name: 'Margherita', price: 9, ingredients: ['dough', 'sauce', 'cheese'] },
-    pepperoni: { name: 'Pepperoni', price: 12, ingredients: ['dough', 'sauce', 'cheese', 'pepperoni'] },
-    funghi: { name: 'Funghi', price: 12, ingredients: ['dough', 'sauce', 'cheese', 'mushroom'] },
+    margherita: { name: 'Margherita', price: 9, unlockCost: 0, ingredients: ['dough', 'sauce', 'cheese'] },
+    pepperoni: { name: 'Pepperoni', price: 12, unlockCost: 60, ingredients: ['dough', 'sauce', 'cheese', 'pepperoni'] },
+    funghi: { name: 'Funghi', price: 12, unlockCost: 60, ingredients: ['dough', 'sauce', 'cheese', 'mushroom'] },
+    zucchini: { name: 'Zucchini', price: 15, unlockCost: 70, ingredients: ['dough', 'sauce', 'cheese', 'zucchini'] },
   };
 
   /* ---------- extensible ingredient system ---------- */
@@ -81,6 +84,7 @@
     { id: 'cheese', name: 'Cheese', requires: ['sauce'], dur: CHEESE_DUR, iconX: 300 },
     { id: 'pepperoni', name: 'Pepperoni', requires: ['cheese'], dur: TOPPING_DUR, iconX: 340 },
     { id: 'mushroom', name: 'Mushroom', requires: ['cheese'], dur: TOPPING_DUR, iconX: 380 },
+    { id: 'zucchini', name: 'Zucchini', requires: ['cheese'], dur: TOPPING_DUR, iconX: 420 },
   ];
   const ING_MAP = Object.fromEntries(INGREDIENTS.map((i) => [i.id, i]));
   const ING_ICON_Y = 126;
@@ -125,7 +129,7 @@
     spawnTimer: 3.5, time: 0,
   };
   const progress = {
-    doughLevel: 1, ovenLevel: 1, sodaCabinet: false,
+    doughLevel: 1, ovenLevel: 1, staffDiscountLevel: 0, sodaCabinet: false, jukebox: false,
     unlockedRecipes: new Set(['margherita']),
   };
   const shift = {
@@ -155,9 +159,11 @@
   const MAX_UPGRADE_LEVEL = 5;
   const DOUGH_UPGRADE_COSTS = { 2: 50, 3: 80, 4: 130, 5: 205 };
   const OVEN_UPGRADE_COSTS = { 2: 70, 3: 110, 4: 180, 5: 285 };
+  const STAFF_DISCOUNT_COSTS = { 1: 50, 2: 80, 3: 130, 4: 205, 5: 325 };
   const speedMultiplier = (level) => 1 + Math.max(0, level - 1) * 0.2;
   const kneadDuration = () => BASE_KNEAD_DUR / speedMultiplier(progress.doughLevel);
   const bakeDuration = () => BASE_BAKE_DUR / speedMultiplier(progress.ovenLevel);
+  const discountedStaffCost = (baseCost) => Math.max(1, Math.round(baseCost * Math.pow(0.8, progress.staffDiscountLevel)));
   const money = (value) => String.fromCharCode(36) + Math.round(value);
   const clampReputation = (value) => clamp(Math.round(value), 0, 100);
   function changeReputation(delta) {
@@ -263,6 +269,7 @@
     if (pz.baked) return 'baked-' + (pizzaRecipeId(pz) || 'margherita');
     if (pz.added.has('pepperoni')) return 'pepperoni';
     if (pz.added.has('mushroom')) return 'mushroom';
+    if (pz.added.has('zucchini')) return 'zucchini';
     if (pz.added.has('cheese')) return 'cheese';
     if (pz.added.has('sauce')) return 'sauce';
     return 'dough';
@@ -758,7 +765,7 @@
       if (dist(c.x, c.y, c.tx, c.ty) < 4) { c.x = c.tx; c.y = c.ty; c.state = 'waiting'; c.waitElapsed = 0; }
     } else if (c.state === 'waiting') {
       c.waitElapsed = (c.waitElapsed || 0) + dt;
-      c.patience -= dt;
+      c.patience -= dt * (progress.jukebox ? 0.75 : 1);
       if (c.patience / c.maxPatience <= 0.4) c.enteredRed = true;
       if (c.patience <= 0) {
         c.state = 'leaving'; c.claimedBy = null; c.mood = 'angry'; shift.stats.lost++;
@@ -825,7 +832,8 @@
   function hireWaiter(type) {
     const fast = type === 'fast';
     const drinksOnly = type === 'drinks';
-    const cost = drinksOnly ? DRINKS_WAITER_COST : fast ? FAST_WAITER_COST : WAITER_COST;
+    const baseCost = drinksOnly ? DRINKS_WAITER_COST : fast ? FAST_WAITER_COST : WAITER_COST;
+    const cost = discountedStaffCost(baseCost);
     if ((drinksOnly && !progress.sodaCabinet) || state.cash < cost) return;
     state.cash -= cost; shift.stats.staffCosts += cost;
     const base = state.player.speed / 2;
@@ -839,9 +847,10 @@
   }
 
   function hireHost() {
-    if (hostActive || state.cash < HOST_COST) return;
-    state.cash -= HOST_COST;
-    shift.stats.staffCosts += HOST_COST;
+    const cost = discountedStaffCost(HOST_COST);
+    if (hostActive || state.cash < cost) return;
+    state.cash -= cost;
+    shift.stats.staffCosts += cost;
     hostActive = true;
     hostTimer = HOST_DURATION;
     SND.hire();
@@ -1071,8 +1080,9 @@
 
   /* ---------- chefs ---------- */
   function hireChef() {
-    if (state.cash < CHEF_COST) return;
-    state.cash -= CHEF_COST; shift.stats.staffCosts += CHEF_COST;
+    const cost = discountedStaffCost(CHEF_COST);
+    if (state.cash < cost) return;
+    state.cash -= cost; shift.stats.staffCosts += cost;
     state.chefs.push({
       id: ++chefSeq, x: ENTRANCE.x, y: ENTRANCE.y, r: 13, speed: state.player.speed * 0.8,
       hands: [null, null], state: 'enter', action: null, pending: null, targetSlot: -1, handSlot: -1,
@@ -1227,6 +1237,10 @@
     } else if (name === 'mushroom') {
       ctx.fillStyle = '#d8c5aa'; ctx.beginPath(); ctx.arc(cx, cy - 2, r, Math.PI, 0); ctx.fill();
       ctx.fillStyle = '#a98f72'; ctx.fillRect(cx - 3, cy - 2, 6, r);
+    } else if (name === 'zucchini') {
+      ctx.fillStyle = '#6f9f3d'; ctx.beginPath(); ctx.arc(cx, cy, r, 0, 7); ctx.fill();
+      ctx.fillStyle = '#c4db72'; ctx.beginPath(); ctx.arc(cx, cy, r - 4, 0, 7); ctx.fill();
+      ctx.fillStyle = '#547b31'; ctx.beginPath(); ctx.arc(cx, cy, 2, 0, 7); ctx.fill();
     }
   }
   function drawBin() {
@@ -1312,6 +1326,15 @@
     ctx.fillStyle = C.textInv; ctx.font = "700 9px 'Inter', sans-serif"; ctx.textAlign = 'center';
     ctx.fillText('DRINKS', SODA.x + SODA.w / 2, SODA.y + 58);
   }
+  function drawJukebox() {
+    if (!progress.jukebox) return;
+    const x = 904, y = 426;
+    ctx.fillStyle = '#5a2f32'; roundRect(x - 18, y - 28, 36, 56, 10); ctx.fill();
+    ctx.fillStyle = '#e8b04a'; ctx.beginPath(); ctx.arc(x, y - 10, 12, Math.PI, 0); ctx.fill();
+    ctx.fillStyle = '#303b46'; roundRect(x - 11, y - 10, 22, 22, 4); ctx.fill();
+    ctx.fillStyle = '#f2d15d'; ctx.beginPath(); ctx.arc(x, y + 1, 7, 0, 7); ctx.fill();
+    ctx.fillStyle = '#fff7ec'; ctx.font = "800 8px 'Inter', sans-serif"; ctx.textAlign = 'center'; ctx.fillText('JUKEBOX', x, y + 22);
+  }
   function drawDrinkIcon(id, x, y) {
     const drink = DRINKS[id]; if (!drink) return;
     ctx.fillStyle = drink.color; roundRect(x - 4, y - 8, 8, 16, 2); ctx.fill();
@@ -1331,7 +1354,7 @@
       ctx.fillStyle = '#fff'; ctx.globalAlpha = 0.7;
       ctx.beginPath(); ctx.arc(cx - 3, cy - 2, 1.6, 0, 7); ctx.fill();
       ctx.beginPath(); ctx.arc(cx + 4, cy + 2, 1.6, 0, 7); ctx.fill(); ctx.globalAlpha = 1;
-    } else if (stage === 'pepperoni' || stage === 'mushroom' || stage.startsWith('baked-')) {
+    } else if (stage === 'pepperoni' || stage === 'mushroom' || stage === 'zucchini' || stage.startsWith('baked-')) {
       const baked = stage.startsWith('baked-');
       const recipe = baked ? stage.slice(6) : stage;
       ctx.fillStyle = baked ? C.pizzaBaked : C.pizzaDough; ctx.beginPath(); ctx.arc(cx, cy, r, 0, 7); ctx.fill();
@@ -1342,6 +1365,9 @@
       } else if (recipe === 'funghi' || recipe === 'mushroom') {
         ctx.fillStyle = '#d8c5aa';
         [[-4,-3],[4,2],[-1,5]].forEach(([dx,dy]) => { ctx.beginPath(); ctx.arc(cx + dx * scale, cy + dy * scale, 2.2 * scale, Math.PI, 0); ctx.fill(); });
+      } else if (recipe === 'zucchini') {
+        ctx.fillStyle = '#79a942';
+        [[-4,-3],[4,2],[-1,5]].forEach(([dx,dy]) => { ctx.beginPath(); ctx.arc(cx + dx * scale, cy + dy * scale, 2.2 * scale, 0, 7); ctx.fill(); });
       } else {
         ctx.fillStyle = '#f0d84a'; ctx.beginPath(); ctx.arc(cx - 3, cy - 1, 2.4, 0, 7); ctx.fill();
         ctx.beginPath(); ctx.arc(cx + 3, cy + 2, 2.4, 0, 7); ctx.fill();
@@ -1604,7 +1630,9 @@
     hireBtn.textContent = 'Hire staff \u25BE' + (active > 0 ? '  (\u00D7' + active + ')' : '');
     hireMenu.querySelectorAll('button').forEach((b) => {
       const t = b.dataset.type;
-      const cost = t === 'chef' ? CHEF_COST : t === 'host' ? HOST_COST : t === 'drinks' ? DRINKS_WAITER_COST : t === 'fast' ? FAST_WAITER_COST : WAITER_COST;
+      const baseCost = t === 'chef' ? CHEF_COST : t === 'host' ? HOST_COST : t === 'drinks' ? DRINKS_WAITER_COST : t === 'fast' ? FAST_WAITER_COST : WAITER_COST;
+      const cost = discountedStaffCost(baseCost);
+      b.textContent = (t === 'chef' ? 'Chef' : t === 'host' ? 'Host' : t === 'drinks' ? 'Drinks runner' : t === 'fast' ? 'Fast waiter' : 'Waiter') + ' · ' + money(cost);
       b.classList.toggle('off', state.cash < cost || (t === 'drinks' && !progress.sodaCabinet) || (t === 'host' && hostActive));
     });
   }
@@ -1693,19 +1721,30 @@
     doughUpgradeBtn.disabled = doughMaxed || state.cash < doughCost;
     ovenUpgradeBtn.disabled = ovenMaxed || state.cash < ovenCost;
     sodaUpgradeBtn.disabled = progress.sodaCabinet || state.cash < 150;
+    const staffNext = progress.staffDiscountLevel + 1;
+    const staffCost = STAFF_DISCOUNT_COSTS[staffNext] || 0;
+    const staffMaxed = progress.staffDiscountLevel >= MAX_UPGRADE_LEVEL;
+    staffDiscountUpgradeBtn.disabled = staffMaxed || state.cash < staffCost;
+    jukeboxUpgradeBtn.disabled = progress.jukebox || state.cash < 100;
     doughUpgradeBtn.classList.toggle('purchased', doughMaxed);
     ovenUpgradeBtn.classList.toggle('purchased', ovenMaxed);
     sodaUpgradeBtn.classList.toggle('purchased', progress.sodaCabinet);
+    staffDiscountUpgradeBtn.classList.toggle('purchased', staffMaxed);
+    jukeboxUpgradeBtn.classList.toggle('purchased', progress.jukebox);
     doughUpgradeBtn.querySelector('strong').textContent = 'Faster dough · Level ' + progress.doughLevel;
     ovenUpgradeBtn.querySelector('strong').textContent = 'Faster oven · Level ' + progress.ovenLevel;
     doughUpgradeBtn.querySelector('span').textContent = doughMaxed ? 'Maximum level · +80% speed' : 'Upgrade to Level ' + doughNext + ' · +20% speed · ' + money(doughCost);
     ovenUpgradeBtn.querySelector('span').textContent = ovenMaxed ? 'Maximum level · +80% speed' : 'Upgrade to Level ' + ovenNext + ' · +20% speed · ' + money(ovenCost);
     sodaUpgradeBtn.querySelector('span').textContent = progress.sodaCabinet ? 'Purchased · Coke, Water, Dew' : 'Permanent drinks service · $150';
+    staffDiscountUpgradeBtn.querySelector('strong').textContent = 'Cheaper staff · Level ' + progress.staffDiscountLevel;
+    staffDiscountUpgradeBtn.querySelector('span').textContent = staffMaxed ? 'Maximum level · 67% total discount' : 'Upgrade to Level ' + staffNext + ' · 20% cheaper · ' + money(staffCost);
+    jukeboxUpgradeBtn.querySelector('span').textContent = progress.jukebox ? 'Purchased · Patience drains 25% slower' : 'Customers lose patience 25% slower · $100';
     recipeButtons.forEach((button) => {
       const id = button.dataset.recipe, unlocked = progress.unlockedRecipes.has(id);
-      button.disabled = unlocked || state.cash < 60;
+      const cost = RECIPES[id].unlockCost || 0;
+      button.disabled = unlocked || state.cash < cost;
       button.classList.toggle('purchased', unlocked);
-      button.textContent = unlocked ? RECIPES[id].name + ' · Unlocked' : 'Unlock ' + RECIPES[id].name + ' · $60';
+      button.textContent = unlocked ? RECIPES[id].name + ' · Unlocked' : 'Unlock ' + RECIPES[id].name + ' · ' + money(cost);
     });
     const spent = Math.max(0, shift.shoppingStartCash - Math.round(state.cash));
     shopBudget.innerHTML =
@@ -1722,8 +1761,11 @@
     if (doughCost && state.cash >= doughCost) count++;
     if (ovenCost && state.cash >= ovenCost) count++;
     if (!progress.sodaCabinet && state.cash >= 150) count++;
+    const staffCost = STAFF_DISCOUNT_COSTS[progress.staffDiscountLevel + 1];
+    if (staffCost && state.cash >= staffCost) count++;
+    if (!progress.jukebox && state.cash >= 100) count++;
     for (const id of Object.keys(RECIPES)) {
-      if (!progress.unlockedRecipes.has(id) && state.cash >= 60) count++;
+      if (!progress.unlockedRecipes.has(id) && state.cash >= (RECIPES[id].unlockCost || 0)) count++;
     }
     return count;
   }
@@ -1765,11 +1807,26 @@
     progress.sodaCabinet = true;
     refreshReportOptions();
   });
+  staffDiscountUpgradeBtn.addEventListener('click', () => {
+    const level = progress.staffDiscountLevel + 1;
+    const cost = STAFF_DISCOUNT_COSTS[level];
+    if (!cost || state.cash < cost) return;
+    state.cash -= cost;
+    progress.staffDiscountLevel = level;
+    refreshReportOptions(); syncHireUI();
+  });
+  jukeboxUpgradeBtn.addEventListener('click', () => {
+    if (progress.jukebox || state.cash < 100) return;
+    state.cash -= 100;
+    progress.jukebox = true;
+    refreshReportOptions();
+  });
 
   recipeButtons.forEach((button) => button.addEventListener('click', () => {
     const id = button.dataset.recipe;
-    if (progress.unlockedRecipes.has(id) || state.cash < 60) return;
-    state.cash -= 60;
+    const cost = RECIPES[id].unlockCost || 0;
+    if (progress.unlockedRecipes.has(id) || state.cash < cost) return;
+    state.cash -= cost;
     progress.unlockedRecipes.add(id);
     refreshReportOptions();
   }));
@@ -1881,7 +1938,7 @@
     syncHireUI();
   }
   function render() {
-    drawFloor(); drawBin(); drawPickup(); drawSodaCabinet(); drawTables(); drawTrashPiles();
+    drawFloor(); drawBin(); drawPickup(); drawSodaCabinet(); drawJukebox(); drawTables(); drawTrashPiles();
     for (const s of STATIONS) drawStation(s);
     const people = [];
     for (const c of state.customers) people.push({ y: c.y, d: () => drawCustomer(c) });
