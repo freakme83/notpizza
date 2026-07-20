@@ -1172,7 +1172,7 @@
       chef.action = { label: p.label, duration: dur, elapsed: 0, targetCustomerId: p.targetCustomerId, onComplete: () => {
         const pizza = newPizza('dough', p.recipeId);
         pizza.targetCustomerId = p.targetCustomerId;
-        chef.hands[p.handIdx] = { t: 'pizza', pz };
+        chef.hands[p.handIdx] = { t: 'pizza', pz: pizza };
         SND.done();
       } };
     } else {
