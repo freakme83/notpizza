@@ -80,8 +80,8 @@
   ];
   const ING_MAP = Object.fromEntries(INGREDIENTS.map((i) => [i.id, i]));
   const ING_ICON_Y = 126;
-  const WAITER_COST = 25, FAST_WAITER_COST = 35, DRINKS_WAITER_COST = 30, WAITER_DURATION = 300;
-  const CHEF_COST = 100, CHEF_DURATION = 300, HOST_COST = 40, HOST_DURATION = 300;
+  const WAITER_COST = 20, FAST_WAITER_COST = 25, DRINKS_WAITER_COST = 25, WAITER_DURATION = 420;
+  const CHEF_COST = 80, CHEF_DURATION = 420, HOST_COST = 30, HOST_DURATION = 420;
   const DRINKS = {
     coke: { name: 'Coke', price: 2, color: '#c0392b' },
     water: { name: 'Water', price: 1, color: '#70b7d8' },
@@ -340,7 +340,11 @@
     if (readyHand >= 0 && freeOven >= 0) return { ok: true, action: 'Bake', mode: 'place', oSlot: freeOven, hSlot: readyHand };
     const bakedOven = ov.slots.findIndex((s) => s.pizza && s.done);
     const freeHand = firstFreeHand();
-    if (bakedOven >= 0 && freeHand >= 0) return { ok: true, action: 'Collect', mode: 'collect', oSlot: bakedOven, hSlot: freeHand };
+    if (bakedOven >= 0 && freeHand >= 0) {
+      const recipeId = pizzaRecipeId(ov.slots[bakedOven].pizza);
+      const recipeName = RECIPES[recipeId] ? RECIPES[recipeId].name : 'Pizza';
+      return { ok: true, action: 'Collect ' + recipeName, mode: 'collect', oSlot: bakedOven, hSlot: freeHand };
+    }
     if (readyHand >= 0) return { ok: false, hint: 'oven full' };
     if (bakedOven >= 0) return { ok: false, hint: 'hands full' };
     if (ov.slots.some((s) => s.pizza && !s.done)) return { ok: false, hint: 'baking...' };
@@ -374,6 +378,11 @@
     if (!c || !c.drinkId || c.drinkDelivered || (c.state !== 'waiting' && c.state !== 'eating')) return false;
     if (!carrier || carrier.id !== c.drinkId) return false;
     if (ownerId === null) releaseWaiterAssignment(c.drinkClaimedBy, c, 'drink');
+    if (c.state === 'waiting') {
+      const missingPatience = Math.max(0, c.maxPatience - c.patience);
+      const patienceBoost = Math.round(clamp(c.maxPatience * 0.1 + missingPatience * 0.25, 5, 14));
+      c.patience = Math.min(c.maxPatience, c.patience + patienceBoost);
+    }
     recordFirstService(c);
     c.drinkDelivered = true;
     c.drinkClaimedBy = null;
@@ -1145,7 +1154,6 @@
       }
       if (nx > PICKUP.x - 6 && nx < PICKUP.x + PICKUP.w + 6 && ny > PICKUP.y - p.r - 6 && ny < PICKUP.y + PICKUP.h + p.r + 6) ny = p.y < PICKUP.y ? PICKUP.y - p.r - 6 : PICKUP.y + PICKUP.h + p.r + 6;
       p.x = nx; p.y = ny; p.walk += dt * 10;
-      if (Math.floor(p.walk) !== Math.floor(p.walk - dt * 10)) SND.step();
     }
     if (inBinRange(p) && p.trash.some((item) => item && item.t === 'trash') && !binIsFull()) depositPlayerTrash();
     if (dist(p.x, p.y, ENTRANCE.x, ENTRANCE.y) < 42) {
