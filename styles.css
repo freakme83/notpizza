@@ -185,23 +185,36 @@ canvas#game {
   z-index: 6;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
+  align-items: stretch;
+  justify-content: flex-start;
   gap: 8px;
+  padding: 64px max(28px, calc((100% - 720px) / 2)) 28px;
   color: #fff7ec;
   background: rgba(26, 20, 16, 0.72);
   backdrop-filter: blur(2px);
+  overflow-y: auto;
 }
 
 #pauseOverlay.hidden { display: none; }
 
-#pauseOverlay strong {
+#pauseOverlay > strong {
   color: #ffd9a0;
-  font: 700 clamp(2rem, 6vw, 3.4rem) 'Barlow Condensed', sans-serif;
+  font: 700 clamp(1.8rem, 5vw, 2.7rem) 'Barlow Condensed', sans-serif;
 }
 
-#pauseOverlay span {
+#pauseOverlay > span {
   font-weight: 800;
+}
+
+#pauseOverlay h3 {
+  margin: 12px 0 0;
+  color: #ffd9a0;
+  font: 600 1rem 'Barlow Condensed', sans-serif;
+}
+
+#pauseOverlay .option-card strong {
+  color: #fff7ec;
+  font: 800 0.82rem 'Inter', sans-serif;
 }
 
 #hireWrap.paused {
@@ -369,6 +382,7 @@ canvas#game {
 @media (max-width: 620px) {
   .report-stats { grid-template-columns: repeat(2, 1fr); }
   .shop-budget { grid-template-columns: 1fr; }
+  #pauseOverlay { padding: 58px 18px 20px; }
   .report-options,
   .recipe-options { grid-template-columns: 1fr; }
   .report-card { padding: 18px; }
@@ -439,7 +453,7 @@ canvas#game {
 
 .pause-recipes {
   display: flex;
-  width: min(460px, 86%);
+  width: 100%;
   flex-direction: column;
   gap: 5px;
   margin-top: 12px;
