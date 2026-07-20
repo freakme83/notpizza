@@ -1331,17 +1331,12 @@
     ctx.fillStyle = C.skin; ctx.beginPath(); ctx.arc(x, bodyY - 9, 8, 0, 7); ctx.fill();
     if (opts.hat) { ctx.fillStyle = C.hat; ctx.beginPath(); ctx.arc(x, bodyY - 11, 9, Math.PI, 0); ctx.fill(); ctx.fillRect(x - 11, bodyY - 12, 22, 3); }
   }
-  function playerSpritePose(p, carriedCount) {
-    if (p.action) {
-      const progress = clamp(p.action.elapsed / p.action.duration, 0, 0.999);
-      return { row: 3, frame: Math.floor(progress * 4) };
-    }
-    if (carriedCount) return { row: 2, frame: p.moving ? Math.floor(p.walk * 0.8) % 4 : 0 };
+  function playerSpritePose(p) {
     const frame = p.moving ? Math.floor(p.walk * 0.8) % 4 : Math.floor(state.time * 1.6) % 4;
     return { row: p.moving ? 1 : 0, frame };
   }
   function drawPlayerSprite(p, carried) {
-    const pose = playerSpritePose(p, carried.length);
+    const pose = playerSpritePose(p);
     const size = 78;
     ctx.fillStyle = 'rgba(0,0,0,0.18)';
     ctx.beginPath(); ctx.ellipse(p.x, p.y + 16, 13, 4, 0, 0, 7); ctx.fill();
