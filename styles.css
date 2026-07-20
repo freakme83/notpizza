@@ -437,8 +437,10 @@ canvas#game {
 
 .ingredient-dropdown {
   position: absolute;
-  left: 18px;
-  bottom: 18px;
+  left: 31.25%;
+  top: 122px;
+  bottom: auto;
+  transform: translateX(-50%);
   z-index: 8;
   display: none;
 }
@@ -464,8 +466,10 @@ canvas#game {
 
 .ingredient-options {
   position: absolute;
-  left: 0;
-  bottom: calc(100% + 7px);
+  left: 50%;
+  top: calc(100% + 7px);
+  bottom: auto;
+  transform: translateX(-50%);
   display: flex;
   min-width: 150px;
   flex-direction: column;
@@ -499,6 +503,9 @@ canvas#game {
 
 .drink-dropdown {
   left: 230px;
+  top: auto;
+  bottom: 18px;
+  transform: none;
 }
 
 #hireMenu button[data-type='drinks'] {
