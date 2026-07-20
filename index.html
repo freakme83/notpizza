@@ -19,13 +19,21 @@
       <canvas id="game" width="960" height="620" aria-label="you are not pizza game"></canvas>
 
       <div id="gameControls" class="hidden" aria-label="Game controls">
-        <button id="pauseBtn" type="button" aria-pressed="false">Pause</button>
+        <button id="pauseBtn" type="button" aria-pressed="false">
+          <span class="office-button-copy"><strong id="officeButtonTitle">Office / Upgrades</strong><small id="officeButtonHint">Pause game</small></span>
+          <span id="officeBadge" class="office-badge hidden" aria-label="Available purchases">0</span>
+        </button>
         <button id="restartBtn" type="button">Restart</button>
       </div>
 
+      <div id="upgradeNotice" class="upgrade-notice hidden" role="status" aria-live="polite">
+        <strong>Upgrade available</strong>
+        <span>Open Office / Upgrades to improve your kitchen.</span>
+      </div>
+
       <div id="pauseOverlay" class="hidden" role="dialog" aria-modal="true" aria-labelledby="pauseTitle">
-        <strong id="pauseTitle">Paused · Restaurant office</strong>
-        <span>Spend carefully, then press P or Escape to return to the chaos.</span>
+        <strong id="pauseTitle">Restaurant Office</strong>
+        <span>The game is paused while you buy upgrades and unlock menu items. Press P or Escape to return.</span>
         <div id="staffNotice" class="staff-notice hidden" role="alert">
           <strong id="staffNoticeText">Shift of the waiter is over.</strong>
           <span>Currently assigned staff</span>
@@ -37,13 +45,16 @@
           <button id="doughUpgrade" class="option-card" type="button"><strong>Faster dough · Level 1</strong><span>Upgrade to Level 2</span></button>
           <button id="ovenUpgrade" class="option-card" type="button"><strong>Faster oven · Level 1</strong><span>Upgrade to Level 2</span></button>
           <button id="sodaUpgrade" class="option-card" type="button"><strong>Soda cabinet</strong><span>Permanent drinks service · $150</span></button>
+          <button id="staffDiscountUpgrade" class="option-card" type="button"><strong>Cheaper staff · Level 0</strong><span>Unlock Level 1 · $50</span></button>
+          <button id="jukeboxUpgrade" class="option-card" type="button"><strong>Jukebox</strong><span>Customers lose patience 25% slower · $100</span></button>
         </div>
         <h3>Expand the menu</h3>
-        <p class="report-note">Recipes cost $60 each. Every extra recipe attracts 5% more customers.</p>
+        <p class="report-note">Every extra recipe attracts 5% more customers.</p>
         <div class="report-options recipe-options">
           <button class="option-card recipe-choice" data-recipe="margherita" type="button">Margherita</button>
           <button class="option-card recipe-choice" data-recipe="pepperoni" type="button">Unlock Pepperoni</button>
           <button class="option-card recipe-choice" data-recipe="funghi" type="button">Unlock Funghi</button>
+          <button class="option-card recipe-choice" data-recipe="zucchini" type="button">Unlock Zucchini</button>
         </div>
       </div>
 
@@ -83,6 +94,6 @@
         <span>click to start</span>
       </div>
     </div>
-    <script src="main.js?v=station-prep-flow"></script>
+    <script src="main.js?v=staff-task-priority"></script>
   </body>
 </html>
