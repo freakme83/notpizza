@@ -73,7 +73,7 @@
   const ING_MAP = Object.fromEntries(INGREDIENTS.map((i) => [i.id, i]));
   const ING_ICON_Y = 126;
   const WAITER_COST = 25, FAST_WAITER_COST = 35, DRINKS_WAITER_COST = 30, WAITER_DURATION = 300;
-  const CHEF_COST = 100, CHEF_DURATION = 300, HOST_COST = 40;
+  const CHEF_COST = 100, CHEF_DURATION = 300, HOST_COST = 40, HOST_DURATION = 300;
   const DRINKS = {
     coke: { name: 'Coke', price: 2, color: '#c0392b' },
     water: { name: 'Water', price: 1, color: '#70b7d8' },
@@ -117,12 +117,14 @@
     unlockedRecipes: new Set(['margherita']),
   };
   const shift = {
-    day: 1, elapsed: 0, orderCloseAt: 270, duration: 300,
-    phase: 'open', showingReport: false, recipeUnlockUsed: false, shoppingStartCash: 0, stats: null,
+    elapsed: 0, showingReport: false, shoppingStartCash: 0,
+    reputation: 50, peakReputation: 50, lowRepTimer: 0, lostStreak: 0,
+    serviceStreak: 0, bestServiceStreak: 0, repFlash: 0, repFlashTimer: 0,
+    stats: null,
   };
   const freshShiftStats = () => ({ revenue: 0, tips: 0, wasteCosts: 0, staffCosts: 0, served: 0, lost: 0, totalWait: 0, dineIn: 0, takeaway: 0 });
   shift.stats = freshShiftStats();
-  let hostActive = false;
+  let hostActive = false, hostTimer = 0;
   const unlockedRecipeIds = () => [...progress.unlockedRecipes];
   const availableIngredients = () => {
     const ids = new Set(unlockedRecipeIds().flatMap((id) => RECIPES[id].ingredients));
@@ -144,6 +146,36 @@
   const kneadDuration = () => BASE_KNEAD_DUR / speedMultiplier(progress.doughLevel);
   const bakeDuration = () => BASE_BAKE_DUR / speedMultiplier(progress.ovenLevel);
   const money = (value) => String.fromCharCode(36) + Math.round(value);
+  const clampReputation = (value) => clamp(Math.round(value), 0, 100);
+  function changeReputation(delta) {
+    if (!delta || shift.showingReport) return;
+    shift.reputation = clampReputation(shift.reputation + delta);
+    shift.peakReputation = Math.max(shift.peakReputation, shift.reputation);
+    shift.repFlash = delta;
+    shift.repFlashTimer = 1.8;
+    if (shift.reputation <= 0) showGameOver();
+  }
+  function recordSuccessfulVisit(c) {
+    let delta = 0;
+    if (c.pizzaServiceAt <= 25) delta += 2;
+    if (c.tipEligible) delta += 1;
+    delta += c.enteredRed ? -1 : 1;
+    if (c.orderedDrink && c.drinkDelivered) delta += 1;
+    shift.lostStreak = 0;
+    shift.serviceStreak++;
+    shift.bestServiceStreak = Math.max(shift.bestServiceStreak, shift.serviceStreak);
+    changeReputation(delta);
+  }
+  function recordLostVisit() {
+    shift.lostStreak++;
+    shift.serviceStreak = 0;
+    changeReputation(shift.lostStreak === 1 ? -6 : shift.lostStreak === 2 ? -8 : -10);
+  }
+  function formatRunTime(seconds) {
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60).toString().padStart(2, '0');
+    return mins + ':' + secs;
+  }
 
   /* ---------- input ---------- */
   const Input = { keys: {}, pressed: {} };
@@ -436,6 +468,7 @@
 
   function serveCustomer(c) {
     recordFirstService(c);
+    c.pizzaServiceAt = c.serviceElapsed;
     if (c.takeaway) {
       if (!c.drinkDelivered) { c.drinkId = null; c.drinkClaimedBy = null; }
       c.state = 'paying'; c.payTimer = 1.3;
@@ -627,8 +660,9 @@
       patience: (takeaway ? 42 : 55) * (hostActive ? 1.25 : 1),
       maxPatience: (takeaway ? 42 : 55) * (hostActive ? 1.25 : 1),
       eatTimer: 0, payTimer: 0, bob: Math.random() * 6, claimedBy: null,
-      drinkId, drinkDelivered: false, drinkClaimedBy: null,
-      serviceElapsed: 0, firstServiceAt: null, tipEligible: false, mood: null,
+      drinkId, orderedDrink: !!drinkId, drinkDelivered: false, drinkClaimedBy: null,
+      serviceElapsed: 0, firstServiceAt: null, pizzaServiceAt: Infinity,
+      tipEligible: false, enteredRed: false, mood: null,
     };
     seat.cust = c; state.customers.push(c);
   }
@@ -641,8 +675,10 @@
     } else if (c.state === 'waiting') {
       c.waitElapsed = (c.waitElapsed || 0) + dt;
       c.patience -= dt;
+      if (c.patience / c.maxPatience <= 0.4) c.enteredRed = true;
       if (c.patience <= 0) {
         c.state = 'leaving'; c.claimedBy = null; c.mood = 'angry'; shift.stats.lost++;
+        recordLostVisit();
         if (c.seat) { c.seat.occupied = false; c.seat.cust = null; c.seat = null; }
         SND.angry();
       }
@@ -661,6 +697,7 @@
         shift.stats.totalWait += c.waitElapsed || 0;
         if (c.takeaway) shift.stats.takeaway++; else shift.stats.dineIn++;
         if (!c.takeaway) spawnTrash(c.x, c.y, c.table ? c.table.id : null); SND.cash();
+        recordSuccessfulVisit(c);
         if (c.seat) { c.seat.occupied = false; c.seat.cust = null; c.seat = null; }
         c.state = 'leaving';
       }
@@ -722,6 +759,7 @@
     state.cash -= HOST_COST;
     shift.stats.staffCosts += HOST_COST;
     hostActive = true;
+    hostTimer = HOST_DURATION;
     SND.hire();
   }
 
@@ -1335,14 +1373,22 @@
     ctx.fillStyle = 'rgba(26,20,16,0.82)'; roundRect(W - 138, 12, 126, 34, 8); ctx.fill();
     ctx.fillStyle = '#ffd9a0'; ctx.font = "800 18px 'Inter', sans-serif"; ctx.textAlign = 'right';
     ctx.fillText(money(state.cash), W - 24, 29);
-    const remaining = Math.max(0, shift.orderCloseAt - shift.elapsed);
-    const minutes = Math.floor(remaining / 60);
-    const seconds = Math.floor(remaining % 60).toString().padStart(2, '0');
     ctx.fillStyle = 'rgba(26,20,16,0.82)'; roundRect(12, 54, 230, 30, 8); ctx.fill();
     ctx.fillStyle = C.textInv; ctx.font = "700 13px 'Inter', sans-serif"; ctx.textAlign = 'left';
-    ctx.fillText('Day ' + shift.day + ' - ' + shift.phase.toUpperCase(), 24, 69);
+    ctx.fillText('REP ' + shift.reputation, 24, 69);
+    ctx.fillStyle = 'rgba(255,255,255,0.16)'; roundRect(78, 64, 82, 10, 5); ctx.fill();
+    ctx.fillStyle = shift.reputation > 40 ? C.good : shift.reputation > 20 ? '#e0a93a' : C.bad;
+    roundRect(78, 64, 82 * shift.reputation / 100, 10, 5); ctx.fill();
+    ctx.fillStyle = C.textInv;
     ctx.textAlign = 'right';
-    ctx.fillText(shift.elapsed < shift.orderCloseAt ? minutes + ':' + seconds : 'Finish orders', 230, 69);
+    ctx.fillText(formatRunTime(shift.elapsed), 230, 69);
+    if (shift.repFlashTimer > 0) {
+      ctx.globalAlpha = Math.min(1, shift.repFlashTimer);
+      ctx.fillStyle = shift.repFlash > 0 ? C.good : C.bad;
+      ctx.textAlign = 'left';
+      ctx.fillText((shift.repFlash > 0 ? '+' : '') + shift.repFlash, 166, 69);
+      ctx.globalAlpha = 1;
+    }
     const waiting = state.customers.filter((c) => c.state === 'waiting').length;
     if (waiting > 0) {
       ctx.fillStyle = 'rgba(26,20,16,0.82)'; roundRect(W / 2 - 56, 54, 112, 30, 8); ctx.fill();
@@ -1388,38 +1434,59 @@
   });
 
 
-  /* ---------- shifts, reports, upgrades ---------- */
-  function shiftSpawnRange() {
-    const dayFactor = Math.max(0.65, 1 - (shift.day - 1) * 0.06);
-    if (shift.elapsed < 60) return [10 * dayFactor, 15 * dayFactor];
-    if (shift.elapsed < 210) return [5 * dayFactor, 9 * dayFactor];
-    return [3.8 * dayFactor, 7 * dayFactor];
+  /* ---------- endless chaos, reputation and upgrades ---------- */
+  function reputationSpawnRange() {
+    const rep = shift.reputation;
+    let range;
+    if (rep <= 20) range = [14, 18];
+    else if (rep <= 40) range = [10, 14];
+    else if (rep <= 60) range = [7, 11];
+    else if (rep <= 80) range = [5, 8];
+    else range = [3.5, 6];
+    const menuFactor = Math.max(0.8, 1 - (unlockedRecipeIds().length - 1) * 0.05);
+    return [range[0] * menuFactor, range[1] * menuFactor];
   }
-  function updateShift(dt) {
+  function updateChaos(dt) {
     shift.elapsed += dt;
-    shift.phase = shift.elapsed < 60 ? 'open' : shift.elapsed < 210 ? 'rush' : shift.elapsed < shift.orderCloseAt ? 'last call' : 'closing';
-    if (shift.elapsed >= shift.duration && state.customers.length === 0) showShiftReport();
+    shift.repFlashTimer = Math.max(0, shift.repFlashTimer - dt);
+    if (hostActive) {
+      hostTimer -= dt;
+      if (hostTimer <= 0) { hostTimer = 0; hostActive = false; }
+    }
+    if (shift.reputation < 20) {
+      shift.lowRepTimer += dt;
+      if (shift.lowRepTimer >= 20) {
+        shift.lowRepTimer -= 20;
+        changeReputation(-1);
+      }
+    } else {
+      shift.lowRepTimer = 0;
+    }
   }
-  function showShiftReport() {
+  function showGameOver() {
     if (shift.showingReport) return;
     shift.showingReport = true; Input.keys = {}; Input.pressed = {};
     hireMenu.classList.add('hidden'); hireWrap.classList.add('paused');
-    reportTitle.textContent = 'Day ' + shift.day + ' report';
+    pauseOverlay.classList.add('hidden');
+    pauseBtn.textContent = 'Pause';
+    paused = false;
+    reportTitle.textContent = 'Chaos run report';
     const avgWait = shift.stats.served ? Math.round(shift.stats.totalWait / shift.stats.served) : 0;
     const net = Math.round(shift.stats.revenue + shift.stats.tips - shift.stats.staffCosts - shift.stats.wasteCosts);
     reportStats.innerHTML =
+      '<div><span>Time survived</span><strong>' + formatRunTime(shift.elapsed) + '</strong></div>' +
       '<div><span>Customers served</span><strong>' + shift.stats.served + '</strong></div>' +
       '<div><span>Customers lost</span><strong>' + shift.stats.lost + '</strong></div>' +
+      '<div><span>Peak reputation</span><strong>' + shift.peakReputation + '</strong></div>' +
+      '<div><span>Best service streak</span><strong>' + shift.bestServiceStreak + '</strong></div>' +
+      '<div><span>Recipes unlocked</span><strong>' + unlockedRecipeIds().length + '</strong></div>' +
       '<div><span>Revenue</span><strong>' + money(shift.stats.revenue) + '</strong></div>' +
       '<div><span>Staff costs</span><strong>-' + money(shift.stats.staffCosts) + '</strong></div>' +
       '<div><span>Waste</span><strong>-' + money(shift.stats.wasteCosts) + '</strong></div>' +
       '<div><span>Tips</span><strong>' + money(shift.stats.tips) + '</strong></div>' +
-      '<div><span>Net shift result</span><strong>' + (net < 0 ? '-' + money(Math.abs(net)) : money(net)) + '</strong></div>' +
+      '<div><span>Net run result</span><strong>' + (net < 0 ? '-' + money(Math.abs(net)) : money(net)) + '</strong></div>' +
       '<div><span>Average wait</span><strong>' + avgWait + 's</strong></div>';
-    shift.recipeUnlockUsed = false;
-    shift.shoppingStartCash = Math.round(state.cash);
-    refreshReportOptions();
-    nextShiftBtn.textContent = 'Start day ' + (shift.day + 1);
+    nextShiftBtn.textContent = 'Try again';
     shiftReport.classList.remove('hidden');
   }
   function refreshReportOptions() {
@@ -1446,10 +1513,15 @@
       button.classList.toggle('purchased', unlocked);
       button.textContent = unlocked ? RECIPES[id].name + ' · Unlocked' : 'Unlock ' + RECIPES[id].name + ' · $60';
     });
+    if (paused) {
+      pauseRecipes.innerHTML = '<strong>Recipes</strong>' + unlockedRecipeIds().map((id) =>
+        '<span>' + RECIPES[id].name + ': ' + RECIPES[id].ingredients.map((ingredient) => ING_MAP[ingredient].name).join(' → ') + ' · $' + RECIPES[id].price + '</span>'
+      ).join('');
+    }
     const spent = Math.max(0, shift.shoppingStartCash - Math.round(state.cash));
     shopBudget.innerHTML =
-      '<div><span>Shopping budget</span><strong>' + money(shift.shoppingStartCash) + '</strong></div>' +
-      '<div><span>Spent</span><strong>-' + money(spent) + '</strong></div>' +
+      '<div><span>Cash on pause</span><strong>' + money(shift.shoppingStartCash) + '</strong></div>' +
+      '<div><span>Spent this visit</span><strong>-' + money(spent) + '</strong></div>' +
       '<div><span>Cash remaining</span><strong>' + money(state.cash) + '</strong></div>';
   }
   doughUpgradeBtn.addEventListener('click', () => {
@@ -1478,18 +1550,7 @@
     progress.unlockedRecipes.add(id);
     refreshReportOptions();
   }));
-  function resetRestaurantForNextShift() {
-    state.customers = []; state.waiters = []; state.chefs = []; state.trash = []; state.spawnTimer = 2.5; hostActive = false;
-    state.player.x = 480; state.player.y = 500; state.player.pizzas = [null, null]; state.player.drink = null; state.player.trash = [null, null]; state.player.action = null;
-    for (const slot of oven().slots) { slot.pizza = null; slot.timer = 0; slot.baking = false; slot.done = false; slot.claimedBy = null; }
-    for (const table of TABLES) for (const seat of table.seats) { seat.occupied = false; seat.cust = null; }
-    for (const spot of TAKEAWAY_SPOTS) { spot.occupied = false; spot.cust = null; }
-  }
-  function startNextShift() {
-    shift.day++; shift.elapsed = 0; shift.phase = 'open'; shift.showingReport = false; shift.stats = freshShiftStats();
-    resetRestaurantForNextShift(); shiftReport.classList.add('hidden'); hireWrap.classList.remove('paused'); last = performance.now();
-  }
-  nextShiftBtn.addEventListener('click', startNextShift);
+  nextShiftBtn.addEventListener('click', () => window.location.reload());
 
   /* ---------- main loop ---------- */
   let last = 0;
@@ -1497,7 +1558,7 @@
   let paused = false;
 
   function setPaused(nextPaused) {
-    if (!started || paused === nextPaused) return;
+    if (!started || shift.showingReport || paused === nextPaused) return;
     paused = nextPaused;
     Input.keys = {};
     Input.pressed = {};
@@ -1505,9 +1566,11 @@
     pauseBtn.setAttribute('aria-pressed', String(paused));
     pauseOverlay.classList.toggle('hidden', !paused);
     if (paused) {
+      shift.shoppingStartCash = Math.round(state.cash);
       pauseRecipes.innerHTML = '<strong>Recipes</strong>' + unlockedRecipeIds().map((id) =>
         '<span>' + RECIPES[id].name + ': ' + RECIPES[id].ingredients.map((ingredient) => ING_MAP[ingredient].name).join(' → ') + ' · $' + RECIPES[id].price + '</span>'
       ).join('');
+      refreshReportOptions();
     }
     ingredientOptions.classList.add('hidden');
     hireWrap.classList.toggle('paused', paused);
@@ -1535,7 +1598,8 @@
     requestAnimationFrame(frame);
   }
   function update(dt) {
-    updateShift(dt);
+    updateChaos(dt);
+    if (shift.showingReport) return;
     updatePlayer(dt);
     syncIngredientDropdown();
     syncDrinkDropdown();
@@ -1545,15 +1609,16 @@
     state.waiters = state.waiters.filter((w) => !w.remove);
     for (const ch of state.chefs) updateChef(ch, dt);
     state.chefs = state.chefs.filter((c) => !c.remove);
-    if (shift.elapsed < shift.orderCloseAt) {
-      state.spawnTimer -= dt;
-      if (state.spawnTimer <= 0) {
-        spawnCustomer();
-        const range = shiftSpawnRange();
-        state.spawnTimer = rand(range[0], range[1]);
-      }
+    state.spawnTimer -= dt;
+    if (state.spawnTimer <= 0) {
+      spawnCustomer();
+      const range = reputationSpawnRange();
+      state.spawnTimer = rand(range[0], range[1]);
     }
-    for (const c of state.customers) updateCustomer(c, dt);
+    for (const c of state.customers) {
+      updateCustomer(c, dt);
+      if (shift.showingReport) break;
+    }
     state.customers = state.customers.filter((c) => !c.remove);
     syncHireUI();
   }
