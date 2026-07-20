@@ -12,7 +12,9 @@
   const pauseBtn = document.getElementById('pauseBtn');
   const restartBtn = document.getElementById('restartBtn');
   const pauseOverlay = document.getElementById('pauseOverlay');
-  const pauseRecipes = document.getElementById('pauseRecipes');
+  const staffNotice = document.getElementById('staffNotice');
+  const staffNoticeText = document.getElementById('staffNoticeText');
+  const staffRoster = document.getElementById('staffRoster');
   const ingredientDropdown = document.getElementById('ingredientDropdown');
   const ingredientToggle = document.getElementById('ingredientToggle');
   const ingredientOptions = document.getElementById('ingredientOptions');
@@ -81,7 +83,7 @@
   };
 
   // trash bin next to oven (just right of the oven counter)
-  const BIN = { x: 836, y: 252, r: 20 };
+  const BIN = { x: 836, y: 252, r: 20, count: 0, capacity: 20, claimedBy: null };
 
   const TABLES = [];
   [360, 620].forEach((tx, ti) => {
@@ -262,7 +264,34 @@
   const hasFreeHand = (w) => w.hands.findIndex((h) => !h);
   const carriedPizzaHand = (w) => w.hands.findIndex((h) => h && h.t === 'pizza');
   const carriedTrashHand = (w) => w.hands.findIndex((h) => h && h.t === 'trash');
+  const carriedBinBagHand = (w) => w.hands.findIndex((h) => h && h.t === 'binbag');
   const carriedDrinkHand = (w) => w.hands.findIndex((h) => h && h.t === 'drink');
+  const binIsFull = () => BIN.count >= BIN.capacity;
+  function depositPlayerTrash() {
+    const p = state.player;
+    for (let i = 0; i < p.trash.length && !binIsFull(); i++) {
+      if (!p.trash[i] || p.trash[i].t !== 'trash') continue;
+      p.trash[i] = null;
+      BIN.count++;
+      SND.bin();
+    }
+  }
+  function takeFullBinBag(handOwner, handIndex, ownerId = null) {
+    if (!binIsFull() || handIndex < 0 || (BIN.claimedBy !== null && BIN.claimedBy !== ownerId)) return false;
+    handOwner[handIndex] = { t: 'binbag' };
+    BIN.count = 0;
+    BIN.claimedBy = null;
+    SND.done();
+    return true;
+  }
+  function depositWaiterTrash(w) {
+    for (let i = 0; i < w.hands.length && !binIsFull(); i++) {
+      if (!w.hands[i] || w.hands[i].t !== 'trash') continue;
+      w.hands[i] = null;
+      BIN.count++;
+      SND.bin();
+    }
+  }
 
   /* ---------- interaction range ---------- */
   function inStationRange(p, s) {
@@ -400,6 +429,12 @@
       const drinkCustomer = nearestDrinkCustomer(p.x, p.y, DELIVER_RADIUS, p.drink.id, null, true);
       if (drinkCustomer) return { kind: 'deliver-drink', ok: true, text: 'E: Deliver ' + DRINKS[p.drink.id].name, target: drinkCustomer };
     }
+    if (inBinRange(p) && binIsFull()) {
+      const hand = p.trash.findIndex((item) => !item);
+      return hand >= 0
+        ? { kind: 'take-bin-bag', ok: true, text: 'E: Take full trash bag to door', hand }
+        : { kind: 'take-bin-bag', ok: false, text: 'Trash full · free a hand' };
+    }
     if (inBinRange(p) && (p.drink || p.pizzas.some(Boolean))) {
       const item = p.drink ? 'drink' : 'pizza';
       const loss = item === 'drink' ? 1 : 3;
@@ -513,6 +548,14 @@
       if (deliverDrink(c.target, p.drink)) p.drink = null;
     }
     else if (c.kind === 'drink-menu') toggleDrinkDropdown();
+    else if (c.kind === 'take-bin-bag') {
+      if (BIN.claimedBy !== null) {
+        const waiter = state.waiters.find((candidate) => candidate.id === BIN.claimedBy);
+        if (waiter && waiter.state === 'tofullbin') waiter.state = 'seek';
+        BIN.claimedBy = null;
+      }
+      takeFullBinBag(p.trash, c.hand);
+    }
     else if (c.kind === 'discard-held') {
       if (c.item === 'drink') { p.drink = null; state.cash -= 1; shift.stats.wasteCosts += 1; }
       else {
@@ -783,6 +826,12 @@
   function pickWaiterJob(w, dt) {
     const drinkHand = carriedDrinkHand(w);
     if (!w.drinksOnly && carriedPizzaHand(w) >= 0) { w.state = 'tocust'; return; }
+    if (!w.drinksOnly && carriedBinBagHand(w) >= 0) { w.state = 'tobagdoor'; return; }
+    if (!w.drinksOnly && binIsFull() && BIN.claimedBy === null && hasFreeHand(w) >= 0) {
+      BIN.claimedBy = w.id;
+      w.state = 'tofullbin';
+      return;
+    }
     if (!w.drinksOnly && carriedTrashHand(w) >= 0 && hasFreeHand(w) >= 0 && state.trash.some((t) => t.claimedBy === null)) { w.state = 'totrash'; return; }
     if (!w.drinksOnly && carriedTrashHand(w) >= 0) { w.state = 'tobin'; return; }
     if (!w.drinksOnly && hasFreeHand(w) >= 0 && state.trash.some((t) => t.claimedBy === null)) { w.state = 'totrash'; return; }
@@ -801,7 +850,15 @@
 
   function updateWaiter(w, dt) {
     w.walk += dt * 6;
-    if (w.state !== 'leave') { w.timer -= dt; if (w.timer <= 0) { w.timer = 0; w.state = 'leave'; } }
+    if (w.state !== 'leave') {
+      w.timer -= dt;
+      if (w.timer <= 0) {
+        w.timer = 0;
+        w.state = 'leave';
+        showStaffShiftNotice(waiterRole(w));
+        return;
+      }
+    }
 
     if (w.state === 'enter') { if (moveEntity(w, 660, 250, dt)) w.state = 'seek'; return; }
 
@@ -822,7 +879,8 @@
       if (w.targetCust && w.targetCust.claimedBy === w.id) w.targetCust.claimedBy = null;
       if (w.targetTrash && w.targetTrash.claimedBy === w.id) w.targetTrash.claimedBy = null;
       if (w.targetDrinkCust && w.targetDrinkCust.drinkClaimedBy === w.id) w.targetDrinkCust.drinkClaimedBy = null;
-      if (moveEntity(w, ENTRANCE.x, ENTRANCE.y, dt)) w.remove = true;
+      if (BIN.claimedBy === w.id) BIN.claimedBy = null;
+      if (moveEntity(w, ENTRANCE.x, H - 18, dt)) w.remove = true;
       return;
     }
 
@@ -876,8 +934,33 @@
 
     if (w.state === 'tobin') {
       if (moveEntity(w, BIN.x, BIN.y, dt) || dist(w.x, w.y, BIN.x, BIN.y) < 46) {
-        for (let i = 0; i < w.hands.length; i++) if (w.hands[i] && w.hands[i].t === 'trash') w.hands[i] = null;
-        SND.bin(); w.state = 'seek';
+        depositWaiterTrash(w);
+        w.state = 'seek';
+      }
+      return;
+    }
+
+    if (w.state === 'tofullbin') {
+      if (!binIsFull() || (BIN.claimedBy !== null && BIN.claimedBy !== w.id)) {
+        if (BIN.claimedBy === w.id) BIN.claimedBy = null;
+        w.state = 'seek';
+        return;
+      }
+      if (moveEntity(w, BIN.x, BIN.y, dt) || dist(w.x, w.y, BIN.x, BIN.y) < 46) {
+        const hand = hasFreeHand(w);
+        if (hand >= 0 && takeFullBinBag(w.hands, hand, w.id)) w.state = 'tobagdoor';
+        else w.state = 'seek';
+      }
+      return;
+    }
+
+    if (w.state === 'tobagdoor') {
+      const hand = carriedBinBagHand(w);
+      if (hand < 0) { w.state = 'seek'; return; }
+      if (moveEntity(w, ENTRANCE.x, H - 18, dt)) {
+        w.hands[hand] = null;
+        SND.bin();
+        w.state = 'seek';
       }
       return;
     }
@@ -1003,12 +1086,20 @@
   }
   function updateChef(chef, dt) {
     chef.walk += dt * 6;
-    if (chef.state !== 'leave') { chef.timer -= dt; if (chef.timer <= 0) { chef.timer = 0; chef.state = 'leave'; } }
+    if (chef.state !== 'leave') {
+      chef.timer -= dt;
+      if (chef.timer <= 0) {
+        chef.timer = 0;
+        chef.state = 'leave';
+        showStaffShiftNotice('chef');
+        return;
+      }
+    }
     if (chef.state === 'enter') { if (moveEntity(chef, prep().use.x, 250, dt)) chef.state = 'seekwork'; return; }
     if (chef.state === 'leave') {
       for (let i = 0; i < chef.hands.length; i++) { const h = chef.hands[i]; if (h && h.t === 'pizza') { if (pizzaReadyToBake(h.pz)) returnPizzaToOven(h.pz); chef.hands[i] = null; } }
       if (chef.action) chef.action = null; if (chef.pending) chef.pending = null;
-      if (moveEntity(chef, ENTRANCE.x, ENTRANCE.y, dt)) chef.remove = true;
+      if (moveEntity(chef, ENTRANCE.x, H - 18, dt)) chef.remove = true;
       return;
     }
     if (chef.state === 'prepping') {
@@ -1048,9 +1139,13 @@
       p.x = nx; p.y = ny; p.walk += dt * 10;
       if (Math.floor(p.walk) !== Math.floor(p.walk - dt * 10)) SND.step();
     }
-    if (inBinRange(p) && p.trash.some(Boolean)) {
-      p.trash = [null, null];
-      SND.bin();
+    if (inBinRange(p) && p.trash.some((item) => item && item.t === 'trash') && !binIsFull()) depositPlayerTrash();
+    if (dist(p.x, p.y, ENTRANCE.x, ENTRANCE.y) < 42) {
+      let removedBag = false;
+      for (let i = 0; i < p.trash.length; i++) {
+        if (p.trash[i] && p.trash[i].t === 'binbag') { p.trash[i] = null; removedBag = true; }
+      }
+      if (removedBag) SND.bin();
     }
     if (Input.pressed['KeyE'] || Input.pressed['Space']) tryInteract();
   }
@@ -1094,13 +1189,13 @@
   }
   function drawBin() {
     // body
-    ctx.fillStyle = C.bin; roundRect(BIN.x - 13, BIN.y - 12, 26, 26, 4); ctx.fill();
-    ctx.fillStyle = C.binLid; roundRect(BIN.x - 15, BIN.y - 14, 30, 6, 3); ctx.fill();
+    ctx.fillStyle = binIsFull() ? '#8f2f2a' : C.bin; roundRect(BIN.x - 13, BIN.y - 12, 26, 26, 4); ctx.fill();
+    ctx.fillStyle = binIsFull() ? '#c44b42' : C.binLid; roundRect(BIN.x - 15, BIN.y - 14, 30, 6, 3); ctx.fill();
     // ribs
     ctx.strokeStyle = 'rgba(0,0,0,0.25)'; ctx.lineWidth = 1.5;
     for (let i = -1; i <= 1; i++) { ctx.beginPath(); ctx.moveTo(BIN.x - 11, BIN.y - 4 + i * 7); ctx.lineTo(BIN.x + 11, BIN.y - 4 + i * 7); ctx.stroke(); }
     ctx.fillStyle = C.text; ctx.font = "700 9px 'Inter', sans-serif"; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText('Trash', BIN.x, BIN.y + 22);
+    ctx.fillText(binIsFull() ? 'FULL · TO DOOR' : 'Trash ' + BIN.count + '/' + BIN.capacity, BIN.x, BIN.y + 22);
   }
   function drawTrashPiles() {
     for (const t of state.trash) {
@@ -1215,6 +1310,12 @@
     ctx.fillStyle = C.trash; roundRect(cx - 6, cy - 4, 9, 7, 2); ctx.fill();
     ctx.fillStyle = C.trashPaper; roundRect(cx + 1, cy - 6, 6, 5, 2); ctx.fill();
   }
+  function drawBinBagIcon(cx, cy) {
+    ctx.fillStyle = '#302b28';
+    ctx.beginPath(); ctx.moveTo(cx - 8, cy + 7); ctx.lineTo(cx - 6, cy - 5); ctx.lineTo(cx - 2, cy - 9); ctx.lineTo(cx + 2, cy - 9); ctx.lineTo(cx + 6, cy - 5); ctx.lineTo(cx + 8, cy + 7); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = '#8f8176'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(cx - 3, cy - 8); ctx.lineTo(cx + 3, cy - 8); ctx.stroke();
+  }
   function drawPerson(x, y, color, opts = {}) {
     const bob = opts.bob ? Math.sin(opts.bob) * 1.4 : 0, bodyY = y + bob;
     ctx.fillStyle = 'rgba(0,0,0,0.18)'; ctx.beginPath(); ctx.ellipse(x, y + 16, 12, 4, 0, 0, 7); ctx.fill();
@@ -1231,7 +1332,8 @@
     const carriedTrash = p.trash.filter(Boolean);
     carriedTrash.forEach((item, i) => {
       const offset = carriedTrash.length === 1 ? -12 : i === 0 ? -14 : 2;
-      drawTrashIcon(p.x + offset, p.y - 14);
+      if (item.t === 'binbag') drawBinBagIcon(p.x + offset, p.y - 16);
+      else drawTrashIcon(p.x + offset, p.y - 14);
     });
     if (p.drink) drawDrinkIcon(p.drink.id, p.x + 12, p.y - 16);
     if (p.action) {
@@ -1285,6 +1387,7 @@
       ctx.fillStyle = C.tray; roundRect(cx - 10, cy - 3, 20, 6, 3); ctx.fill();
       if (h.t === 'pizza') drawPizza(cx, cy - 6, pizzaStage(h.pz), 0.8);
       else if (h.t === 'drink') drawDrinkIcon(h.id, cx, cy - 8);
+      else if (h.t === 'binbag') drawBinBagIcon(cx, cy - 8);
       else drawTrashIcon(cx, cy - 8);
     });
     const pct = clamp(w.timer / WAITER_DURATION, 0, 1), bw = 24, bx = w.x - bw / 2, by = w.y + 18;
@@ -1295,6 +1398,8 @@
       tocust: 'Serve pizza',
       tobin: 'Take trash out',
       totrash: 'Clear table',
+      tofullbin: 'Collect full bag',
+      tobagdoor: 'Bag to door',
       todrinkcust: 'Serve drink',
       todrinkcabinet: 'Get drink',
       discard: 'Discard item',
@@ -1395,6 +1500,11 @@
       ctx.fillStyle = C.textInv; ctx.font = "700 13px 'Inter', sans-serif"; ctx.textAlign = 'center';
       ctx.fillText('Orders: ' + waiting, W / 2, 69);
     }
+    if (binIsFull()) {
+      ctx.fillStyle = 'rgba(173,45,39,0.94)'; roundRect(W / 2 - 118, 91, 236, 28, 8); ctx.fill();
+      ctx.fillStyle = C.textInv; ctx.font = "800 12px 'Inter', sans-serif"; ctx.textAlign = 'center';
+      ctx.fillText('TRASH FULL · TAKE BAG TO DOOR', W / 2, 105);
+    }
   }
   function drawContext() {
     const c = getContext(); if (!c) return;
@@ -1451,7 +1561,11 @@
     shift.repFlashTimer = Math.max(0, shift.repFlashTimer - dt);
     if (hostActive) {
       hostTimer -= dt;
-      if (hostTimer <= 0) { hostTimer = 0; hostActive = false; }
+      if (hostTimer <= 0) {
+        hostTimer = 0;
+        hostActive = false;
+        showStaffShiftNotice('host');
+      }
     }
     if (shift.reputation < 20) {
       shift.lowRepTimer += dt;
@@ -1513,11 +1627,6 @@
       button.classList.toggle('purchased', unlocked);
       button.textContent = unlocked ? RECIPES[id].name + ' · Unlocked' : 'Unlock ' + RECIPES[id].name + ' · $60';
     });
-    if (paused) {
-      pauseRecipes.innerHTML = '<strong>Recipes</strong>' + unlockedRecipeIds().map((id) =>
-        '<span>' + RECIPES[id].name + ': ' + RECIPES[id].ingredients.map((ingredient) => ING_MAP[ingredient].name).join(' → ') + ' · $' + RECIPES[id].price + '</span>'
-      ).join('');
-    }
     const spent = Math.max(0, shift.shoppingStartCash - Math.round(state.cash));
     shopBudget.innerHTML =
       '<div><span>Cash on pause</span><strong>' + money(shift.shoppingStartCash) + '</strong></div>' +
@@ -1557,6 +1666,33 @@
   let started = false;
   let paused = false;
 
+  function waiterRole(waiter) {
+    return waiter.drinksOnly ? 'drinks runner' : waiter.fast ? 'fast waiter' : 'waiter';
+  }
+  function staffTime(seconds) {
+    const safe = Math.max(0, Math.ceil(seconds));
+    return Math.floor(safe / 60) + ':' + String(safe % 60).padStart(2, '0');
+  }
+  function refreshStaffRoster() {
+    const rows = [];
+    for (const waiter of state.waiters) {
+      if (waiter.remove || waiter.state === 'leave') continue;
+      rows.push('<div><span>' + waiterRole(waiter) + '</span><strong>' + staffTime(waiter.timer) + '</strong></div>');
+    }
+    for (const chef of state.chefs) {
+      if (chef.remove || chef.state === 'leave') continue;
+      rows.push('<div><span>chef</span><strong>' + staffTime(chef.timer) + '</strong></div>');
+    }
+    if (hostActive) rows.push('<div><span>host</span><strong>' + staffTime(hostTimer) + '</strong></div>');
+    staffRoster.innerHTML = rows.length ? rows.join('') : '<div class="empty-roster">No other staff on shift</div>';
+  }
+  function showStaffShiftNotice(role) {
+    setPaused(true);
+    staffNoticeText.textContent = 'Shift of the ' + role + ' is over.';
+    refreshStaffRoster();
+    staffNotice.classList.remove('hidden');
+  }
+
   function setPaused(nextPaused) {
     if (!started || shift.showingReport || paused === nextPaused) return;
     paused = nextPaused;
@@ -1565,11 +1701,9 @@
     pauseBtn.textContent = paused ? 'Resume' : 'Pause';
     pauseBtn.setAttribute('aria-pressed', String(paused));
     pauseOverlay.classList.toggle('hidden', !paused);
+    staffNotice.classList.add('hidden');
     if (paused) {
       shift.shoppingStartCash = Math.round(state.cash);
-      pauseRecipes.innerHTML = '<strong>Recipes</strong>' + unlockedRecipeIds().map((id) =>
-        '<span>' + RECIPES[id].name + ': ' + RECIPES[id].ingredients.map((ingredient) => ING_MAP[ingredient].name).join(' → ') + ' · $' + RECIPES[id].price + '</span>'
-      ).join('');
       refreshReportOptions();
     }
     ingredientOptions.classList.add('hidden');
@@ -1599,15 +1733,23 @@
   }
   function update(dt) {
     updateChaos(dt);
-    if (shift.showingReport) return;
+    if (shift.showingReport || paused) return;
     updatePlayer(dt);
     syncIngredientDropdown();
     syncDrinkDropdown();
     updateOven(dt);
     assignJobs();
-    for (const w of state.waiters) updateWaiter(w, dt);
+    for (const w of state.waiters) {
+      updateWaiter(w, dt);
+      if (paused) break;
+    }
+    if (paused) { syncHireUI(); return; }
     state.waiters = state.waiters.filter((w) => !w.remove);
-    for (const ch of state.chefs) updateChef(ch, dt);
+    for (const ch of state.chefs) {
+      updateChef(ch, dt);
+      if (paused) break;
+    }
+    if (paused) { syncHireUI(); return; }
     state.chefs = state.chefs.filter((c) => !c.remove);
     state.spawnTimer -= dt;
     if (state.spawnTimer <= 0) {
