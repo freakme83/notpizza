@@ -25,7 +25,11 @@
       <div id="pauseOverlay" class="hidden" role="dialog" aria-modal="true" aria-labelledby="pauseTitle">
         <strong id="pauseTitle">Paused · Restaurant office</strong>
         <span>Spend carefully, then press P or Escape to return to the chaos.</span>
-        <div id="pauseRecipes" class="pause-recipes"></div>
+        <div id="staffNotice" class="staff-notice hidden" role="alert">
+          <strong id="staffNoticeText">Shift of the waiter is over.</strong>
+          <span>Currently assigned staff</span>
+          <div id="staffRoster" class="staff-roster"></div>
+        </div>
         <div id="shopBudget" class="shop-budget" aria-live="polite"></div>
         <h3>Permanent upgrades</h3>
         <div class="report-options">
@@ -78,6 +82,6 @@
         <span>click to start</span>
       </div>
     </div>
-    <script src="main.js?v=endless-chaos"></script>
+    <script src="main.js?v=trash-shifts"></script>
   </body>
 </html>
