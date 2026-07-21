@@ -34,6 +34,7 @@
   const shopBudget = document.getElementById('shopBudget');
   const doughUpgradeBtn = document.getElementById('doughUpgrade');
   const ovenUpgradeBtn = document.getElementById('ovenUpgrade');
+  const ovenCapacityUpgradeBtn = document.getElementById('ovenCapacityUpgrade');
   const sodaUpgradeBtn = document.getElementById('sodaUpgrade');
   const staffDiscountUpgradeBtn = document.getElementById('staffDiscountUpgrade');
   const jukeboxUpgradeBtn = document.getElementById('jukeboxUpgrade');
@@ -72,8 +73,9 @@
     { id: 'prep', label: 'Prep', cx: 300, w: 300, h: 92, use: { x: 300, y: 182 } },
     { id: 'oven', label: 'Oven', cx: 660, w: 300, h: 92, use: { x: 660, y: 182 },
       slots: [
-        { cx: 660 - 74, pizza: null, timer: 0, baking: false, done: false, claimedBy: null },
-        { cx: 660 + 74, pizza: null, timer: 0, baking: false, done: false, claimedBy: null },
+        { pizza: null, timer: 0, baking: false, done: false, claimedBy: null },
+        { pizza: null, timer: 0, baking: false, done: false, claimedBy: null },
+        { pizza: null, timer: 0, baking: false, done: false, claimedBy: null },
       ] },
   ];
   const BASE_KNEAD_DUR = 3.5, SAUCE_DUR = 1.5, CHEESE_DUR = 1.5, TOPPING_DUR = 1.2, BASE_BAKE_DUR = 4.5;
@@ -138,10 +140,10 @@
     cash: 0, served: 0,
     player: { x: 480, y: 500, r: 15, speed: 195, pizzas: [null, null], drink: null, dessert: null, trash: [null, null], action: null, dir: 1, walk: 0, moving: false },
     customers: [], waiters: [], chefs: [], trash: [],
-    spawnTimer: 3.5, time: 0,
+    spawnTimer: 3.5, time: 0, trafficMultiplier: 1.25, trafficTarget: 1.25, trafficRampRemaining: 0, cheatFlashTimer: 0,
   };
   const progress = {
-    doughLevel: 1, ovenLevel: 1, staffDiscountLevel: 0, sodaCabinet: false, jukebox: false,
+    doughLevel: 1, ovenLevel: 1, ovenSlots: 1, staffDiscountLevel: 0, sodaCabinet: false, jukebox: false,
     iceCreamCabinet: false, milkshakeUnlocked: false, sundaeFast: false, milkshakeFast: false,
     unlockedRecipes: new Set(['margherita']),
   };
@@ -176,6 +178,10 @@
   const speedMultiplier = (level) => 1 + Math.max(0, level - 1) * 0.2;
   const kneadDuration = () => BASE_KNEAD_DUR / speedMultiplier(progress.doughLevel);
   const bakeDuration = () => BASE_BAKE_DUR / speedMultiplier(progress.ovenLevel);
+  const activeOvenSlots = (ov = oven()) => ov.slots.slice(0, progress.ovenSlots);
+  const OVEN_SLOT_COSTS = { 2: 100, 3: 400 };
+  const OVEN_CUSTOMER_CAPS = { 1: 4, 2: 7, 3: 10 };
+  const OVEN_TRAFFIC_MULTIPLIERS = { 1: 1.25, 2: 1, 3: 0.85 };
   const dessertDuration = (id) => (id === 'sundae' ? progress.sundaeFast : progress.milkshakeFast) ? 2 : 3;
   const availableDessertIds = () => progress.iceCreamCabinet ? ['sundae'].concat(progress.milkshakeUnlocked ? ['milkshake'] : []) : [];
   const discountedStaffCost = (baseCost) => Math.max(1, Math.round(baseCost * Math.pow(0.8, progress.staffDiscountLevel)));
@@ -214,7 +220,18 @@
   /* ---------- input ---------- */
   const Input = { keys: {}, pressed: {} };
   const MOVE_KEYS = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowLeft', 'ArrowDown', 'ArrowRight'];
+  let cheatBuffer = '';
   addEventListener('keydown', (e) => {
+    if (!e.ctrlKey && !e.altKey && !e.metaKey && e.key.length === 1) {
+      cheatBuffer = (cheatBuffer + e.key.toUpperCase()).slice(-8);
+      if (cheatBuffer === 'CASH1000') {
+        state.cash += 1000;
+        state.cheatFlashTimer = 2.5;
+        cheatBuffer = '';
+        SND.cash();
+        if (started) { syncHireUI(); syncOfficeCue(); if (paused) refreshReportOptions(); }
+      }
+    }
     if ((e.code === 'KeyP' || e.code === 'Escape') && started) {
       e.preventDefault();
       togglePause();
@@ -365,18 +382,19 @@
   }
   function ovenRequirement(pizzas, ov) {
     const readyHand = firstCarriedReady();
-    const freeOven = ov.slots.findIndex((s) => !s.pizza);
+    const slots = activeOvenSlots(ov);
+    const freeOven = slots.findIndex((s) => !s.pizza);
     if (readyHand >= 0 && freeOven >= 0) return { ok: true, action: 'Bake', mode: 'place', oSlot: freeOven, hSlot: readyHand };
-    const bakedOven = ov.slots.findIndex((s) => s.pizza && s.done);
+    const bakedOven = slots.findIndex((s) => s.pizza && s.done);
     const freeHand = firstFreeHand();
     if (bakedOven >= 0 && freeHand >= 0) {
-      const recipeId = pizzaRecipeId(ov.slots[bakedOven].pizza);
+      const recipeId = pizzaRecipeId(slots[bakedOven].pizza);
       const recipeName = RECIPES[recipeId] ? RECIPES[recipeId].name : 'Pizza';
       return { ok: true, action: 'Collect ' + recipeName, mode: 'collect', oSlot: bakedOven, hSlot: freeHand };
     }
     if (readyHand >= 0) return { ok: false, hint: 'oven full' };
     if (bakedOven >= 0) return { ok: false, hint: 'hands full' };
-    if (ov.slots.some((s) => s.pizza && !s.done)) return { ok: false, hint: 'baking...' };
+    if (slots.some((s) => s.pizza && !s.done)) return { ok: false, hint: 'baking...' };
     return { ok: false, hint: 'need cheese' };
   }
 
@@ -644,7 +662,7 @@
     serveCustomer(c); SND.done();
   }
   function returnPizzaToOven(pz) {
-    const s = oven().slots.find((sl) => !sl.pizza);
+    const s = activeOvenSlots().find((sl) => !sl.pizza);
     if (s) { s.pizza = pz; s.baking = false; s.done = true; s.timer = bakeDuration(); s.claimedBy = null; }
   }
   function spawnTrash(x, y, tableId = null) {
@@ -950,7 +968,7 @@
 
   /* ---------- oven ---------- */
   function updateOven(dt) {
-    for (const s of oven().slots) {
+    for (const s of activeOvenSlots()) {
       if (s.baking) {
         s.timer += dt;
         if (s.timer >= bakeDuration()) { s.baking = false; s.done = true; if (s.pizza) s.pizza.baked = true; SND.done(); }
@@ -989,7 +1007,7 @@
   // central, single pizza-assignment path: nearest eligible free waiter per ready slot
   function assignJobs() {
     const ov = oven();
-    const readySlots = ov.slots.map((slot, index) => ({ slot, index })).filter(({ slot }) => slot.pizza && slot.done && slot.claimedBy === null);
+    const readySlots = activeOvenSlots(ov).map((slot, index) => ({ slot, index })).filter(({ slot }) => slot.pizza && slot.done && slot.claimedBy === null);
     readySlots.sort((a, b) => {
       const ac = preferredCustomerForPizza(a.slot.pizza), bc = preferredCustomerForPizza(b.slot.pizza);
       if (!ac) return 1; if (!bc) return -1;
@@ -1317,10 +1335,11 @@
   // chef picks its next task each frame while in 'seekwork'
   function chefNext(chef) {
     const ov = oven();
-    const ovenFull = ov.slots.every((s) => s.pizza);
+    const slots = activeOvenSlots(ov);
+    const ovenFull = slots.every((s) => s.pizza);
     const readyHand = chef.hands.findIndex((h) => h && h.t === 'pizza' && pizzaReadyToBake(h.pz));
     if (readyHand >= 0) {
-      const freeOven = ov.slots.findIndex((s) => !s.pizza);
+      const freeOven = slots.findIndex((s) => !s.pizza);
       if (freeOven >= 0) { chef.state = 'tooven'; chef.targetSlot = freeOven; chef.handSlot = readyHand; return; }
       return; // oven full: hold the ready pizza and wait
     }
@@ -1523,8 +1542,11 @@
   }
   function drawOvenSlots(ov, y) {
     const slotW = 66, slotH = 46, cy = y + 58;
-    ov.slots.forEach((s) => {
-      const cx = s.cx, sx = cx - slotW / 2, sy = cy - slotH / 2;
+    const slots = activeOvenSlots(ov);
+    slots.forEach((s, index) => {
+      const spacing = slots.length === 3 ? 84 : slots.length === 2 ? 104 : 0;
+      const cx = ov.cx + (index - (slots.length - 1) / 2) * spacing;
+      const sx = cx - slotW / 2, sy = cy - slotH / 2;
       ctx.fillStyle = '#3a2517'; roundRect(sx, sy, slotW, slotH, 6); ctx.fill();
       ctx.fillStyle = C.ovenMouth; ctx.globalAlpha = s.baking ? 0.85 : 0.25;
       roundRect(sx + 5, sy + 5, slotW - 10, slotH - 10, 4); ctx.fill(); ctx.globalAlpha = 1;
@@ -1875,6 +1897,12 @@
       ctx.fillStyle = C.textInv; ctx.font = "800 12px 'Inter', sans-serif"; ctx.textAlign = 'center';
       ctx.fillText('TRASH FULL · TAKE BAG TO DOOR', W / 2, 105);
     }
+    if (state.cheatFlashTimer > 0) {
+      ctx.globalAlpha = Math.min(1, state.cheatFlashTimer);
+      ctx.fillStyle = 'rgba(76,175,80,0.96)'; roundRect(W - 250, 54, 238, 30, 8); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.font = "800 12px 'Inter', sans-serif"; ctx.textAlign = 'center';
+      ctx.fillText('TEST CASH +$1000', W - 131, 69); ctx.globalAlpha = 1;
+    }
   }
   function drawContext() {
     const c = getContext(); if (!c) return;
@@ -1926,11 +1954,23 @@
     else if (rep <= 80) range = [5, 8];
     else range = [3.5, 6];
     const menuFactor = Math.max(0.8, 1 - (unlockedRecipeIds().length - 1) * 0.05);
-    return [range[0] * menuFactor, range[1] * menuFactor];
+    const onboardingFactor = shift.elapsed < 75 ? 1 + 0.2 * (1 - shift.elapsed / 75) : 1;
+    const factor = menuFactor * state.trafficMultiplier * onboardingFactor;
+    return [range[0] * factor, range[1] * factor];
+  }
+  function activeCustomerCount() {
+    return state.customers.filter((c) => !c.remove && c.state !== 'leaving').length;
   }
   function updateChaos(dt) {
     shift.elapsed += dt;
     shift.repFlashTimer = Math.max(0, shift.repFlashTimer - dt);
+    state.cheatFlashTimer = Math.max(0, state.cheatFlashTimer - dt);
+    if (state.trafficRampRemaining > 0) {
+      const step = Math.min(dt, state.trafficRampRemaining);
+      state.trafficMultiplier += (state.trafficTarget - state.trafficMultiplier) * (step / state.trafficRampRemaining);
+      state.trafficRampRemaining -= step;
+      if (state.trafficRampRemaining <= 0) state.trafficMultiplier = state.trafficTarget;
+    }
     if (hostActive) {
       hostTimer -= dt;
       if (hostTimer <= 0) {
@@ -1984,6 +2024,10 @@
     const ovenMaxed = progress.ovenLevel >= MAX_UPGRADE_LEVEL;
     doughUpgradeBtn.disabled = doughMaxed || state.cash < doughCost;
     ovenUpgradeBtn.disabled = ovenMaxed || state.cash < ovenCost;
+    const ovenSlotNext = progress.ovenSlots + 1;
+    const ovenSlotCost = OVEN_SLOT_COSTS[ovenSlotNext] || 0;
+    const ovenCapacityMaxed = progress.ovenSlots >= 3;
+    ovenCapacityUpgradeBtn.disabled = ovenCapacityMaxed || state.cash < ovenSlotCost;
     sodaUpgradeBtn.disabled = progress.sodaCabinet || state.cash < 150;
     const staffNext = progress.staffDiscountLevel + 1;
     const staffCost = STAFF_DISCOUNT_COSTS[staffNext] || 0;
@@ -1996,6 +2040,7 @@
     milkshakeSpeedUpgradeBtn.disabled = !progress.milkshakeUnlocked || progress.milkshakeFast || state.cash < 120;
     doughUpgradeBtn.classList.toggle('purchased', doughMaxed);
     ovenUpgradeBtn.classList.toggle('purchased', ovenMaxed);
+    ovenCapacityUpgradeBtn.classList.toggle('purchased', ovenCapacityMaxed);
     sodaUpgradeBtn.classList.toggle('purchased', progress.sodaCabinet);
     staffDiscountUpgradeBtn.classList.toggle('purchased', staffMaxed);
     jukeboxUpgradeBtn.classList.toggle('purchased', progress.jukebox);
@@ -2007,6 +2052,8 @@
     ovenUpgradeBtn.querySelector('strong').textContent = 'Faster oven · Level ' + progress.ovenLevel;
     doughUpgradeBtn.querySelector('span').textContent = doughMaxed ? 'Maximum level · +80% speed' : 'Upgrade to Level ' + doughNext + ' · +20% speed · ' + money(doughCost);
     ovenUpgradeBtn.querySelector('span').textContent = ovenMaxed ? 'Maximum level · +80% speed' : 'Upgrade to Level ' + ovenNext + ' · +20% speed · ' + money(ovenCost);
+    ovenCapacityUpgradeBtn.querySelector('strong').textContent = 'Oven capacity · ' + progress.ovenSlots + (progress.ovenSlots === 1 ? ' slot' : ' slots');
+    ovenCapacityUpgradeBtn.querySelector('span').textContent = ovenCapacityMaxed ? 'Maximum capacity · 10 customer cap' : 'Unlock slot ' + ovenSlotNext + ' · ' + money(ovenSlotCost) + ' · customer cap ' + OVEN_CUSTOMER_CAPS[ovenSlotNext];
     sodaUpgradeBtn.querySelector('span').textContent = progress.sodaCabinet ? 'Purchased · Coke, Water, Dew' : 'Permanent drinks service · $150';
     staffDiscountUpgradeBtn.querySelector('strong').textContent = 'Cheaper staff · Level ' + progress.staffDiscountLevel;
     staffDiscountUpgradeBtn.querySelector('span').textContent = staffMaxed ? 'Maximum level · 67% total discount' : 'Upgrade to Level ' + staffNext + ' · 20% cheaper · ' + money(staffCost);
@@ -2036,6 +2083,8 @@
     const ovenCost = OVEN_UPGRADE_COSTS[progress.ovenLevel + 1];
     if (doughCost && state.cash >= doughCost) count++;
     if (ovenCost && state.cash >= ovenCost) count++;
+    const ovenSlotCost = OVEN_SLOT_COSTS[progress.ovenSlots + 1];
+    if (ovenSlotCost && state.cash >= ovenSlotCost) count++;
     if (!progress.sodaCabinet && state.cash >= 150) count++;
     const staffCost = STAFF_DISCOUNT_COSTS[progress.staffDiscountLevel + 1];
     if (staffCost && state.cash >= staffCost) count++;
@@ -2080,6 +2129,16 @@
     const cost = OVEN_UPGRADE_COSTS[level];
     if (!cost || state.cash < cost) return;
     state.cash -= cost; progress.ovenLevel = level; refreshReportOptions();
+  });
+  ovenCapacityUpgradeBtn.addEventListener('click', () => {
+    const next = progress.ovenSlots + 1;
+    const cost = OVEN_SLOT_COSTS[next];
+    if (!cost || state.cash < cost) return;
+    state.cash -= cost;
+    progress.ovenSlots = next;
+    state.trafficTarget = OVEN_TRAFFIC_MULTIPLIERS[next];
+    state.trafficRampRemaining = 30;
+    refreshReportOptions();
   });
   sodaUpgradeBtn.addEventListener('click', () => {
     if (progress.sodaCabinet || state.cash < 150) return;
@@ -2225,9 +2284,14 @@
     state.chefs = state.chefs.filter((c) => !c.remove);
     state.spawnTimer -= dt;
     if (state.spawnTimer <= 0) {
-      spawnCustomer();
-      const range = reputationSpawnRange();
-      state.spawnTimer = rand(range[0], range[1]);
+      const cap = OVEN_CUSTOMER_CAPS[progress.ovenSlots];
+      if (activeCustomerCount() < cap) {
+        spawnCustomer();
+        const range = reputationSpawnRange();
+        state.spawnTimer = rand(range[0], range[1]);
+      } else {
+        state.spawnTimer = 0.75;
+      }
     }
     for (const c of state.customers) {
       updateCustomer(c, dt);
