@@ -47,6 +47,10 @@
           <button id="sodaUpgrade" class="option-card" type="button"><strong>Soda cabinet</strong><span>Permanent drinks service · $150</span></button>
           <button id="staffDiscountUpgrade" class="option-card" type="button"><strong>Cheaper staff · Level 0</strong><span>Unlock Level 1 · $50</span></button>
           <button id="jukeboxUpgrade" class="option-card" type="button"><strong>Jukebox</strong><span>Customers lose patience 25% slower · $100</span></button>
+          <button id="iceCreamUpgrade" class="option-card" type="button"><strong>Ice cream cabinet</strong><span>Unlock Sundae service · $300</span></button>
+          <button id="sundaeSpeedUpgrade" class="option-card" type="button"><strong>Faster Sundae</strong><span>Requires ice cream cabinet</span></button>
+          <button id="milkshakeUnlock" class="option-card" type="button"><strong>Milkshake</strong><span>Requires ice cream cabinet</span></button>
+          <button id="milkshakeSpeedUpgrade" class="option-card" type="button"><strong>Faster Milkshake</strong><span>Requires Milkshake</span></button>
         </div>
         <h3>Expand the menu</h3>
         <p class="report-note">Every extra recipe attracts 5% more customers.</p>
@@ -61,6 +65,11 @@
       <div id="drinkDropdown" class="ingredient-dropdown drink-dropdown hidden" aria-label="Choose drink">
         <button id="drinkToggle" type="button" aria-expanded="false">Drinks ▾</button>
         <div id="drinkOptions" class="ingredient-options hidden"></div>
+      </div>
+
+      <div id="dessertDropdown" class="ingredient-dropdown dessert-dropdown hidden" aria-label="Choose frozen dessert">
+        <button id="dessertToggle" type="button" aria-expanded="false">Frozen treats ▾</button>
+        <div id="dessertOptions" class="ingredient-options hidden"></div>
       </div>
 
       <div id="ingredientDropdown" class="ingredient-dropdown hidden" aria-label="Choose pizza recipe">
@@ -94,6 +103,6 @@
         <span>click to start</span>
       </div>
     </div>
-    <script src="main.js?v=chef-pizza-reference-fix"></script>
+    <script src="main.js?v=ice-cream-station"></script>
   </body>
 </html>
