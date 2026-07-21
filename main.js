@@ -25,6 +25,9 @@
   const drinkDropdown = document.getElementById('drinkDropdown');
   const drinkToggle = document.getElementById('drinkToggle');
   const drinkOptions = document.getElementById('drinkOptions');
+  const dessertDropdown = document.getElementById('dessertDropdown');
+  const dessertToggle = document.getElementById('dessertToggle');
+  const dessertOptions = document.getElementById('dessertOptions');
   const shiftReport = document.getElementById('shiftReport');
   const reportTitle = document.getElementById('reportTitle');
   const reportStats = document.getElementById('reportStats');
@@ -34,6 +37,10 @@
   const sodaUpgradeBtn = document.getElementById('sodaUpgrade');
   const staffDiscountUpgradeBtn = document.getElementById('staffDiscountUpgrade');
   const jukeboxUpgradeBtn = document.getElementById('jukeboxUpgrade');
+  const iceCreamUpgradeBtn = document.getElementById('iceCreamUpgrade');
+  const sundaeSpeedUpgradeBtn = document.getElementById('sundaeSpeedUpgrade');
+  const milkshakeUnlockBtn = document.getElementById('milkshakeUnlock');
+  const milkshakeSpeedUpgradeBtn = document.getElementById('milkshakeSpeedUpgrade');
   const nextShiftBtn = document.getElementById('nextShiftBtn');
   const recipeButtons = [...document.querySelectorAll('.recipe-choice')];
   const W = 960, H = 620;
@@ -95,6 +102,10 @@
     water: { name: 'Water', price: 1, color: '#70b7d8' },
     dew: { name: 'Dew', price: 2, color: '#77b83f' },
   };
+  const DESSERTS = {
+    sundae: { name: 'Sundae', price: 4 },
+    milkshake: { name: 'Milkshake', price: 6 },
+  };
 
   // trash bin next to oven (just right of the oven counter)
   const BIN = { x: 836, y: 252, r: 20, count: 0, capacity: 20, claimedBy: null };
@@ -114,6 +125,7 @@
 
   const PICKUP = { x: 30, y: 463, w: 100, h: 34, use: { x: 80, y: 565 } };
   const SODA = { x: 886, y: 178, w: 58, h: 72, use: { x: 864, y: 268 } };
+  const ICE_CREAM = { x: 886, y: 304, w: 58, h: 78, use: { x: 864, y: 400 } };
   const TAKEAWAY_SPOTS = [
     { x: 80, y: 545, occupied: false, cust: null },
     { x: 80, y: 585, occupied: false, cust: null },
@@ -124,12 +136,13 @@
   let waiterSeq = 0, chefSeq = 0;
   const state = {
     cash: 0, served: 0,
-    player: { x: 480, y: 500, r: 15, speed: 195, pizzas: [null, null], drink: null, trash: [null, null], action: null, dir: 1, walk: 0, moving: false },
+    player: { x: 480, y: 500, r: 15, speed: 195, pizzas: [null, null], drink: null, dessert: null, trash: [null, null], action: null, dir: 1, walk: 0, moving: false },
     customers: [], waiters: [], chefs: [], trash: [],
     spawnTimer: 3.5, time: 0,
   };
   const progress = {
     doughLevel: 1, ovenLevel: 1, staffDiscountLevel: 0, sodaCabinet: false, jukebox: false,
+    iceCreamCabinet: false, milkshakeUnlocked: false, sundaeFast: false, milkshakeFast: false,
     unlockedRecipes: new Set(['margherita']),
   };
   const shift = {
@@ -163,6 +176,8 @@
   const speedMultiplier = (level) => 1 + Math.max(0, level - 1) * 0.2;
   const kneadDuration = () => BASE_KNEAD_DUR / speedMultiplier(progress.doughLevel);
   const bakeDuration = () => BASE_BAKE_DUR / speedMultiplier(progress.ovenLevel);
+  const dessertDuration = (id) => (id === 'sundae' ? progress.sundaeFast : progress.milkshakeFast) ? 2 : 3;
+  const availableDessertIds = () => progress.iceCreamCabinet ? ['sundae'].concat(progress.milkshakeUnlocked ? ['milkshake'] : []) : [];
   const discountedStaffCost = (baseCost) => Math.max(1, Math.round(baseCost * Math.pow(0.8, progress.staffDiscountLevel)));
   const money = (value) => String.fromCharCode(36) + Math.round(value);
   const clampReputation = (value) => clamp(Math.round(value), 0, 100);
@@ -284,6 +299,7 @@
   const carriedTrashHand = (w) => w.hands.findIndex((h) => h && h.t === 'trash');
   const carriedBinBagHand = (w) => w.hands.findIndex((h) => h && h.t === 'binbag');
   const carriedDrinkHand = (w) => w.hands.findIndex((h) => h && h.t === 'drink');
+  const carriedDessertHand = (w) => w.hands.findIndex((h) => h && h.t === 'dessert');
   const binIsFull = () => BIN.count >= BIN.capacity;
   function depositPlayerTrash() {
     const p = state.player;
@@ -318,6 +334,7 @@
   }
   const inBinRange = (p) => dist(p.x, p.y, BIN.x, BIN.y) < 58;
   const inSodaRange = (p) => progress.sodaCabinet && dist(p.x, p.y, SODA.use.x, SODA.use.y) < 72;
+  const inIceCreamRange = (p) => progress.iceCreamCabinet && dist(p.x, p.y, ICE_CREAM.use.x, ICE_CREAM.use.y) < 72;
   const DELIVER_RADIUS = 72;
 
   /* ---------- requirements (player) ---------- */
@@ -392,6 +409,31 @@
       })
       .sort(compareCustomerUrgency)[0] || null;
   }
+  function nearestDessertCustomer(x, y, range, dessertId = null, ownerId = null, allowClaimed = false) {
+    let best = null, bd = range;
+    for (const c of state.customers) {
+      const claimAvailable = allowClaimed || c.dessertClaimedBy === null || c.dessertClaimedBy === ownerId;
+      if (c.state !== 'waiting' || !c.dessertId || c.dessertDelivered || !claimAvailable || (dessertId && c.dessertId !== dessertId)) continue;
+      const d = dist(x, y, c.x, c.y);
+      if (d < bd) { bd = d; best = c; }
+    }
+    return best;
+  }
+  function mostUrgentDessertCustomer(dessertId = null, ownerId = null) {
+    return state.customers
+      .filter((c) => c.state === 'waiting' && c.dessertId && !c.dessertDelivered && (c.dessertClaimedBy === null || c.dessertClaimedBy === ownerId) && (!dessertId || c.dessertId === dessertId))
+      .sort(compareCustomerUrgency)[0] || null;
+  }
+  function deliverDessert(c, carrier, ownerId = null) {
+    if (!c || c.state !== 'waiting' || !c.dessertId || c.dessertDelivered || !carrier || carrier.id !== c.dessertId) return false;
+    if (ownerId === null) releaseWaiterAssignment(c.dessertClaimedBy, c, 'dessert');
+    recordFirstService(c);
+    c.dessertDelivered = true;
+    c.dessertClaimedBy = null;
+    advanceCompletedOrder(c);
+    SND.done();
+    return true;
+  }
   function deliverDrink(c, carrier, ownerId = null) {
     if (!c || !c.drinkId || c.drinkDelivered || (c.state !== 'waiting' && c.state !== 'eating')) return false;
     if (!carrier || carrier.id !== c.drinkId) return false;
@@ -416,9 +458,12 @@
     if (kind === 'pizza') {
       if (waiter.targetCust === customer) waiter.targetCust = null;
       customer.claimedBy = null;
-    } else {
+    } else if (kind === 'drink') {
       if (waiter.targetDrinkCust === customer) waiter.targetDrinkCust = null;
       customer.drinkClaimedBy = null;
+    } else {
+      if (waiter.targetDessertCust === customer) waiter.targetDessertCust = null;
+      customer.dessertClaimedBy = null;
     }
     if (waiter.state !== 'leave') waiter.state = 'seek';
   }
@@ -477,14 +522,18 @@
       const drinkCustomer = nearestDrinkCustomer(p.x, p.y, DELIVER_RADIUS, p.drink.id, null, true);
       if (drinkCustomer) return { kind: 'deliver-drink', ok: true, text: 'E: Deliver ' + DRINKS[p.drink.id].name, target: drinkCustomer };
     }
+    if (p.dessert) {
+      const dessertCustomer = nearestDessertCustomer(p.x, p.y, DELIVER_RADIUS, p.dessert.id, null, true);
+      if (dessertCustomer) return { kind: 'deliver-dessert', ok: true, text: 'E: Deliver ' + DESSERTS[p.dessert.id].name, target: dessertCustomer };
+    }
     if (inBinRange(p) && binIsFull()) {
       const hand = p.trash.findIndex((item) => !item);
       return hand >= 0
         ? { kind: 'take-bin-bag', ok: true, text: 'E: Take full trash bag to door', hand }
         : { kind: 'take-bin-bag', ok: false, text: 'Trash full · free a hand' };
     }
-    if (inBinRange(p) && (p.drink || p.pizzas.some(Boolean))) {
-      const item = p.drink ? 'drink' : 'pizza';
+    if (inBinRange(p) && (p.drink || p.dessert || p.pizzas.some(Boolean))) {
+      const item = p.drink ? 'drink' : p.dessert ? 'dessert' : 'pizza';
       const loss = item === 'drink' ? 1 : 3;
       return { kind: 'discard-held', ok: true, text: 'E: Discard ' + item + ' (-' + money(loss) + ')', item };
     }
@@ -496,6 +545,11 @@
       return p.drink
         ? { kind: 'drink-menu', ok: false, text: 'Already carrying ' + DRINKS[p.drink.id].name }
         : { kind: 'drink-menu', ok: true, text: 'E: Choose drink' };
+    }
+    if (inIceCreamRange(p)) {
+      return p.dessert
+        ? { kind: 'dessert-menu', ok: false, text: 'Already carrying ' + DESSERTS[p.dessert.id].name }
+        : { kind: 'dessert-menu', ok: true, text: 'E: Make frozen treat' };
     }
     const ov = oven();
     if (inStationRange(p, ov)) {
@@ -549,9 +603,10 @@
   }
 
   function advanceCompletedOrder(c) {
-    if (!c.pizzaDelivered || (c.orderedDrink && !c.drinkDelivered)) return false;
+    if (!c.pizzaDelivered || (c.orderedDrink && !c.drinkDelivered) || (c.orderedDessert && !c.dessertDelivered)) return false;
     c.claimedBy = null;
     c.drinkClaimedBy = null;
+    c.dessertClaimedBy = null;
     if (c.takeaway) { c.state = 'paying'; c.payTimer = 1.3; }
     else { c.state = 'eating'; c.eatTimer = 3; }
     return true;
@@ -598,7 +653,11 @@
     else if (c.kind === 'deliver-drink') {
       if (deliverDrink(c.target, p.drink)) p.drink = null;
     }
+    else if (c.kind === 'deliver-dessert') {
+      if (deliverDessert(c.target, p.dessert)) p.dessert = null;
+    }
     else if (c.kind === 'drink-menu') toggleDrinkDropdown();
+    else if (c.kind === 'dessert-menu') toggleDessertDropdown();
     else if (c.kind === 'take-bin-bag') {
       if (BIN.claimedBy !== null) {
         const waiter = state.waiters.find((candidate) => candidate.id === BIN.claimedBy);
@@ -609,6 +668,7 @@
     }
     else if (c.kind === 'discard-held') {
       if (c.item === 'drink') { p.drink = null; state.cash -= 1; shift.stats.wasteCosts += 1; }
+      else if (c.item === 'dessert') { p.dessert = null; state.cash -= 1; shift.stats.wasteCosts += 1; }
       else {
         const slot = p.pizzas.findIndex(Boolean);
         if (slot >= 0) p.pizzas[slot] = null;
@@ -755,6 +815,38 @@
   }
   drinkToggle.addEventListener('click', toggleDrinkDropdown);
 
+  let dessertMenuSignature = '';
+  function rebuildDessertDropdown(ids) {
+    dessertOptions.innerHTML = '';
+    for (const id of ids) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = DESSERTS[id].name + ' · ' + dessertDuration(id) + 's';
+      button.addEventListener('click', () => {
+        if (!inIceCreamRange(state.player) || state.player.action || state.player.dessert) return;
+        dessertOptions.classList.add('hidden'); dessertToggle.setAttribute('aria-expanded', 'false');
+        state.player.action = { label: 'Make ' + DESSERTS[id].name, duration: dessertDuration(id), elapsed: 0, onComplete: () => { state.player.dessert = { id }; SND.done(); } };
+      });
+      dessertOptions.appendChild(button);
+    }
+  }
+  function syncDessertDropdown() {
+    const available = started && !paused && !shift.showingReport && inIceCreamRange(state.player) && !state.player.action && !state.player.dessert;
+    dessertDropdown.classList.toggle('available', available);
+    if (!available) { dessertOptions.classList.add('hidden'); dessertToggle.setAttribute('aria-expanded', 'false'); }
+    const ids = availableDessertIds();
+    const signature = ids.join('|') + '|' + progress.sundaeFast + '|' + progress.milkshakeFast;
+    if (signature !== dessertMenuSignature) { dessertMenuSignature = signature; rebuildDessertDropdown(ids); }
+    for (const button of dessertOptions.querySelectorAll('button')) button.disabled = !available;
+  }
+  function toggleDessertDropdown() {
+    syncDessertDropdown();
+    if (!inIceCreamRange(state.player) || state.player.action || state.player.dessert) return;
+    const opening = dessertOptions.classList.contains('hidden');
+    dessertOptions.classList.toggle('hidden', !opening); dessertToggle.setAttribute('aria-expanded', String(opening));
+  }
+  dessertToggle.addEventListener('click', toggleDessertDropdown);
+
   /* ---------- customers ---------- */
   const CUST_COLORS = ['#d96b4a', '#5b8c5a', '#7b6cb0', '#c98a3a', '#4a90b0', '#b05a7a', '#6a8a3a'];
   function freeSeat() {
@@ -772,6 +864,8 @@
     const recipeId = recipeIds[(Math.random() * recipeIds.length) | 0];
     const drinkIds = Object.keys(DRINKS);
     const drinkId = progress.sodaCabinet && Math.random() < 0.5 ? drinkIds[(Math.random() * drinkIds.length) | 0] : null;
+    const dessertIds = availableDessertIds();
+    const dessertId = dessertIds.length && Math.random() < 0.35 ? dessertIds[(Math.random() * dessertIds.length) | 0] : null;
     const c = {
       id: Math.random(), recipeId, x: ENTRANCE.x, y: ENTRANCE.y, tx: seat.x, ty: seat.y,
       seat, takeaway, side: seat.side || 'n', table: seat.table || null, state: 'entering',
@@ -780,6 +874,7 @@
       maxPatience: (takeaway ? 42 : 55) * (hostActive ? 1.25 : 1),
       eatTimer: 0, payTimer: 0, bob: Math.random() * 6, claimedBy: null,
       drinkId, orderedDrink: !!drinkId, pizzaDelivered: false, drinkDelivered: false, drinkClaimedBy: null, chefOrderClaimedBy: null,
+      dessertId, orderedDessert: !!dessertId, dessertDelivered: false, dessertClaimedBy: null,
       serviceElapsed: 0, firstServiceAt: null, pizzaServiceAt: Infinity,
       tipEligible: false, enteredRed: false, mood: null,
     };
@@ -809,7 +904,7 @@
     } else if (c.state === 'paying') {
       c.payTimer -= dt;
       if (c.payTimer <= 0) {
-        const salePrice = RECIPES[c.recipeId].price + (c.drinkDelivered && c.drinkId ? DRINKS[c.drinkId].price : 0);
+        const salePrice = RECIPES[c.recipeId].price + (c.drinkDelivered && c.drinkId ? DRINKS[c.drinkId].price : 0) + (c.dessertDelivered && c.dessertId ? DESSERTS[c.dessertId].price : 0);
         const tip = c.tipEligible ? Math.round(salePrice * 0.2) : 0;
         state.cash += salePrice + tip; state.served++; shift.stats.revenue += salePrice; shift.stats.tips += tip; shift.stats.served++;
         shift.stats.totalWait += c.waitElapsed || 0;
@@ -861,13 +956,13 @@
     const drinksOnly = type === 'drinks';
     const baseCost = drinksOnly ? DRINKS_WAITER_COST : fast ? FAST_WAITER_COST : WAITER_COST;
     const cost = discountedStaffCost(baseCost);
-    if ((drinksOnly && !progress.sodaCabinet) || state.cash < cost) return;
+    if ((drinksOnly && !progress.sodaCabinet && !progress.iceCreamCabinet) || state.cash < cost) return;
     state.cash -= cost; shift.stats.staffCosts += cost;
     const base = state.player.speed / 2;
     const w = {
       id: ++waiterSeq, x: ENTRANCE.x, y: ENTRANCE.y, r: 13,
       speed: base * (fast ? 1.3 : 1), fast, drinksOnly,
-      hands: [null, null], state: 'enter', targetSlot: -1, targetCust: null, targetTrash: null, targetDrinkCust: null,
+      hands: [null, null], state: 'enter', action: null, targetSlot: -1, targetCust: null, targetTrash: null, targetDrinkCust: null, targetDessertCust: null,
       timer: WAITER_DURATION, walk: 0,
     };
     state.waiters.push(w); SND.hire();
@@ -906,6 +1001,24 @@
 
   function pickWaiterJob(w, dt) {
     const drinkHand = carriedDrinkHand(w);
+    const dessertHand = carriedDessertHand(w);
+    if (w.drinksOnly) {
+      if (drinkHand >= 0) { w.state = 'todrinkcust'; return; }
+      if (dessertHand >= 0) { w.state = 'todessertcust'; return; }
+      if (progress.sodaCabinet && hasFreeHand(w) >= 0) {
+        const drinkTarget = mostUrgentDrinkCustomer(null, w.id);
+        if (drinkTarget) { drinkTarget.drinkClaimedBy = w.id; w.targetDrinkCust = drinkTarget; w.state = 'todrinkcabinet'; return; }
+      }
+      if (progress.iceCreamCabinet && hasFreeHand(w) >= 0) {
+        const dessertTarget = mostUrgentDessertCustomer(null, w.id);
+        if (dessertTarget) { dessertTarget.dessertClaimedBy = w.id; w.targetDessertCust = dessertTarget; w.state = 'toicecreamcabinet'; return; }
+      }
+      if (carriedTrashHand(w) >= 0 && hasFreeHand(w) >= 0 && state.trash.some((t) => t.claimedBy === null)) { w.state = 'totrash'; return; }
+      if (carriedTrashHand(w) >= 0) { w.state = 'tobin'; return; }
+      if (hasFreeHand(w) >= 0 && state.trash.some((t) => t.claimedBy === null)) { w.state = 'totrash'; return; }
+      const idle = progress.sodaCabinet ? SODA.use : ICE_CREAM.use;
+      moveEntity(w, idle.x, idle.y, dt); return;
+    }
     if (!w.drinksOnly && carriedPizzaHand(w) >= 0) { w.state = 'tocust'; return; }
     if (!w.drinksOnly && carriedBinBagHand(w) >= 0) { w.state = 'tobagdoor'; return; }
     if (!w.drinksOnly && binIsFull() && BIN.claimedBy === null && hasFreeHand(w) >= 0) {
@@ -926,6 +1039,11 @@
         return;
       }
     }
+    if (dessertHand >= 0) { w.state = 'todessertcust'; return; }
+    if (progress.iceCreamCabinet && hasFreeHand(w) >= 0) {
+      const target = mostUrgentDessertCustomer(null, w.id);
+      if (target) { target.dessertClaimedBy = w.id; w.targetDessertCust = target; w.state = 'toicecreamcabinet'; return; }
+    }
     moveEntity(w, w.drinksOnly ? SODA.use.x : 660, w.drinksOnly ? SODA.use.y : 250, dt);
   }
 
@@ -943,6 +1061,18 @@
 
     if (w.state === 'enter') { if (moveEntity(w, 660, 250, dt)) w.state = 'seek'; return; }
 
+    if (w.state === 'makingdessert') {
+      const target = w.targetDessertCust;
+      if (!target || target.state !== 'waiting' || target.dessertDelivered || target.dessertClaimedBy !== w.id) { w.action = null; w.targetDessertCust = null; w.state = 'seek'; return; }
+      w.action.elapsed += dt;
+      if (w.action.elapsed >= w.action.duration) {
+        const hand = hasFreeHand(w);
+        if (hand >= 0) w.hands[hand] = { t: 'dessert', id: target.dessertId };
+        w.action = null; w.state = 'todessertcust'; SND.done();
+      }
+      return;
+    }
+
     if (w.state === 'leave') {
       // release any oven slot claim so assignJobs can reassign it
       if (w.targetSlot >= 0) { const s = oven().slots[w.targetSlot]; if (s && s.claimedBy === w.id) s.claimedBy = null; w.targetSlot = -1; }
@@ -954,12 +1084,14 @@
           if (h.t === 'pizza') returnPizzaToOven(h.pz);
           else if (h.t === 'trash') state.trash.push({ x: w.x, y: w.y + 6, claimedBy: null });
           else if (h.t === 'drink' && w.targetDrinkCust && w.targetDrinkCust.drinkClaimedBy === w.id) w.targetDrinkCust.drinkClaimedBy = null;
+          else if (h.t === 'dessert' && w.targetDessertCust && w.targetDessertCust.dessertClaimedBy === w.id) w.targetDessertCust.dessertClaimedBy = null;
           w.hands[i] = null;
         }
       }
       if (w.targetCust && w.targetCust.claimedBy === w.id) w.targetCust.claimedBy = null;
       if (w.targetTrash && w.targetTrash.claimedBy === w.id) w.targetTrash.claimedBy = null;
       if (w.targetDrinkCust && w.targetDrinkCust.drinkClaimedBy === w.id) w.targetDrinkCust.drinkClaimedBy = null;
+      if (w.targetDessertCust && w.targetDessertCust.dessertClaimedBy === w.id) w.targetDessertCust.dessertClaimedBy = null;
       if (BIN.claimedBy === w.id) BIN.claimedBy = null;
       if (moveEntity(w, ENTRANCE.x, H - 18, dt)) w.remove = true;
       return;
@@ -1081,9 +1213,40 @@
       return;
     }
 
+    if (w.state === 'toicecreamcabinet') {
+      const target = w.targetDessertCust;
+      if (!target || target.state !== 'waiting' || !target.dessertId || target.dessertDelivered || target.dessertClaimedBy !== w.id) {
+        if (target && target.dessertClaimedBy === w.id) target.dessertClaimedBy = null;
+        w.targetDessertCust = null; w.state = 'seek'; return;
+      }
+      if (moveEntity(w, ICE_CREAM.use.x, ICE_CREAM.use.y, dt)) {
+        w.action = { elapsed: 0, duration: dessertDuration(target.dessertId), label: 'Make ' + DESSERTS[target.dessertId].name };
+        w.state = 'makingdessert';
+      }
+      return;
+    }
+
+    if (w.state === 'todessertcust') {
+      const hand = carriedDessertHand(w), target = w.targetDessertCust;
+      if (hand < 0) { w.targetDessertCust = null; w.state = 'seek'; return; }
+      if (!target || target.state !== 'waiting' || target.dessertDelivered) {
+        if (target && target.dessertClaimedBy === w.id) target.dessertClaimedBy = null;
+        const replacement = mostUrgentDessertCustomer(w.hands[hand].id, w.id);
+        if (replacement) { replacement.dessertClaimedBy = w.id; w.targetDessertCust = replacement; }
+        else { w.targetDessertCust = null; w.state = 'discard'; }
+        return;
+      }
+      if (moveEntity(w, target.x, target.y, dt) || dist(w.x, w.y, target.x, target.y) < 42) {
+        if (deliverDessert(target, w.hands[hand], w.id)) w.hands[hand] = null;
+        w.targetDessertCust = null; w.state = 'seek';
+      }
+      return;
+    }
+
     if (w.state === 'discard') {
       const pizzaHand = carriedPizzaHand(w);
       const drinkHand = carriedDrinkHand(w);
+      const dessertHand = carriedDessertHand(w);
       if (pizzaHand >= 0) {
         const recipeId = pizzaRecipeId(w.hands[pizzaHand].pz);
         const renewed = mostImpatientUnclaimed(recipeId);
@@ -1097,9 +1260,14 @@
           renewed.drinkClaimedBy = w.id; w.targetDrinkCust = renewed; w.state = 'todrinkcust'; return;
         }
       }
+      if (dessertHand >= 0) {
+        const renewed = mostUrgentDessertCustomer(w.hands[dessertHand].id, w.id);
+        if (renewed) { renewed.dessertClaimedBy = w.id; w.targetDessertCust = renewed; w.state = 'todessertcust'; return; }
+      }
       if (moveEntity(w, BIN.x, BIN.y, dt) || dist(w.x, w.y, BIN.x, BIN.y) < 46) {
         if (pizzaHand >= 0) { w.hands[pizzaHand] = null; state.cash -= 3; shift.stats.wasteCosts += 3; }
         else if (drinkHand >= 0) { w.hands[drinkHand] = null; state.cash -= 1; shift.stats.wasteCosts += 1; }
+        else if (dessertHand >= 0) { w.hands[dessertHand] = null; state.cash -= 1; shift.stats.wasteCosts += 1; }
         SND.bin(); w.state = 'seek';
       }
       return;
@@ -1387,9 +1555,18 @@
     ctx.fillStyle = C.textInv; ctx.font = "700 9px 'Inter', sans-serif"; ctx.textAlign = 'center';
     ctx.fillText('DRINKS', SODA.x + SODA.w / 2, SODA.y + 58);
   }
+  function drawIceCreamCabinet() {
+    if (!progress.iceCreamCabinet) return;
+    ctx.fillStyle = '#6d5a78'; roundRect(ICE_CREAM.x, ICE_CREAM.y, ICE_CREAM.w, ICE_CREAM.h, 8); ctx.fill();
+    ctx.fillStyle = '#d9eef2'; roundRect(ICE_CREAM.x + 7, ICE_CREAM.y + 8, ICE_CREAM.w - 14, 38, 5); ctx.fill();
+    ctx.fillStyle = '#47384e'; roundRect(ICE_CREAM.x + 7, ICE_CREAM.y + 52, ICE_CREAM.w - 14, 18, 4); ctx.fill();
+    drawDessertIcon('sundae', ICE_CREAM.x + ICE_CREAM.w / 2, ICE_CREAM.y + 27);
+    ctx.fillStyle = C.textInv; ctx.font = "700 8px 'Inter', sans-serif"; ctx.textAlign = 'center';
+    ctx.fillText('ICE CREAM', ICE_CREAM.x + ICE_CREAM.w / 2, ICE_CREAM.y + 64);
+  }
   function drawJukebox() {
     if (!progress.jukebox) return;
-    const x = 904, y = 426;
+    const x = 904, y = 500;
     ctx.fillStyle = '#5a2f32'; roundRect(x - 18, y - 28, 36, 56, 10); ctx.fill();
     ctx.fillStyle = '#e8b04a'; ctx.beginPath(); ctx.arc(x, y - 10, 12, Math.PI, 0); ctx.fill();
     ctx.fillStyle = '#303b46'; roundRect(x - 11, y - 10, 22, 22, 4); ctx.fill();
@@ -1400,6 +1577,16 @@
     const drink = DRINKS[id]; if (!drink) return;
     ctx.fillStyle = drink.color; roundRect(x - 4, y - 8, 8, 16, 2); ctx.fill();
     ctx.fillStyle = '#eef7fa'; ctx.fillRect(x - 3, y - 6, 6, 2);
+  }
+  function drawDessertIcon(id, x, y) {
+    if (id === 'milkshake') {
+      ctx.fillStyle = '#f0c7d8'; roundRect(x - 5, y - 8, 10, 17, 3); ctx.fill();
+      ctx.strokeStyle = '#f7f0df'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(x + 2, y - 7); ctx.lineTo(x + 6, y - 15); ctx.stroke();
+    } else {
+      ctx.fillStyle = '#fff0dc'; ctx.beginPath(); ctx.arc(x, y - 5, 7, Math.PI, 0); ctx.fill();
+      ctx.fillStyle = '#d995b5'; ctx.beginPath(); ctx.arc(x, y - 9, 5, 0, 7); ctx.fill();
+      ctx.fillStyle = '#8d5b43'; roundRect(x - 5, y - 4, 10, 10, 2); ctx.fill();
+    }
   }
   function drawPizza(cx, cy, stage, scale = 1) {
     const r = 13 * scale;
@@ -1503,6 +1690,7 @@
       else drawTrashIcon(p.x + offset, p.y - 14);
     });
     if (p.drink) drawDrinkIcon(p.drink.id, p.x + 12, p.y - 16);
+    if (p.dessert) drawDessertIcon(p.dessert.id, p.x - 12, p.y - 18);
     if (p.action) {
       const pct = p.action.elapsed / p.action.duration, bw = 52, bx = p.x - bw / 2, by = p.y - (playerSpriteReady ? 70 : 44);
       ctx.fillStyle = 'rgba(0,0,0,0.55)'; roundRect(bx - 2, by - 2, bw + 4, 12, 6); ctx.fill();
@@ -1554,6 +1742,7 @@
       ctx.fillStyle = C.tray; roundRect(cx - 10, cy - 3, 20, 6, 3); ctx.fill();
       if (h.t === 'pizza') drawPizza(cx, cy - 6, pizzaStage(h.pz), 0.8);
       else if (h.t === 'drink') drawDrinkIcon(h.id, cx, cy - 8);
+      else if (h.t === 'dessert') drawDessertIcon(h.id, cx, cy - 8);
       else if (h.t === 'binbag') drawBinBagIcon(cx, cy - 8);
       else drawTrashIcon(cx, cy - 8);
     });
@@ -1569,6 +1758,9 @@
       tobagdoor: 'Bag to door',
       todrinkcust: 'Serve drink',
       todrinkcabinet: 'Get drink',
+      toicecreamcabinet: 'Make dessert',
+      makingdessert: 'Making dessert',
+      todessertcust: 'Serve dessert',
       discard: 'Discard item',
       leave: 'Clocking out'
     };
@@ -1596,6 +1788,7 @@
       const pendingItems = [];
       if (!c.pizzaDelivered) pendingItems.push(RECIPES[c.recipeId].name);
       if (c.drinkId && !c.drinkDelivered) pendingItems.push(DRINKS[c.drinkId].name);
+      if (c.dessertId && !c.dessertDelivered) pendingItems.push(DESSERTS[c.dessertId].name);
       const txt = pendingItems.join(' + ') + (c.takeaway ? ' · to go' : '');
       ctx.font = "800 10px 'Inter', sans-serif"; const tw = ctx.measureText(txt).width + 14;
       ctx.fillStyle = C.bubble; roundRect(bx - tw / 2, by - 11, tw, 20, 7); ctx.fill();
@@ -1620,7 +1813,7 @@
       ctx.globalAlpha = 1 - prog * 0.7;
       ctx.fillStyle = C.money; roundRect(c.x - 9, fy - 7, 18, 14, 3); ctx.fill();
       ctx.fillStyle = '#fff'; ctx.font = "800 11px 'Inter', sans-serif"; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      const paid = RECIPES[c.recipeId].price + (c.drinkDelivered && c.drinkId ? DRINKS[c.drinkId].price : 0);
+      const paid = RECIPES[c.recipeId].price + (c.drinkDelivered && c.drinkId ? DRINKS[c.drinkId].price : 0) + (c.dessertDelivered && c.dessertId ? DESSERTS[c.dessertId].price : 0);
       const tip = c.tipEligible ? Math.round(paid * 0.2) : 0;
       ctx.fillText(money(paid + tip), c.x, fy);
       ctx.globalAlpha = 1;
@@ -1696,7 +1889,7 @@
       const baseCost = t === 'chef' ? CHEF_COST : t === 'host' ? HOST_COST : t === 'drinks' ? DRINKS_WAITER_COST : t === 'fast' ? FAST_WAITER_COST : WAITER_COST;
       const cost = discountedStaffCost(baseCost);
       b.textContent = (t === 'chef' ? 'Chef' : t === 'host' ? 'Host' : t === 'drinks' ? 'Drinks runner' : t === 'fast' ? 'Fast waiter' : 'Waiter') + ' · ' + money(cost);
-      b.classList.toggle('off', state.cash < cost || (t === 'drinks' && !progress.sodaCabinet) || (t === 'host' && hostActive));
+      b.classList.toggle('off', state.cash < cost || (t === 'drinks' && !progress.sodaCabinet && !progress.iceCreamCabinet) || (t === 'host' && hostActive));
     });
   }
   if (hireBtn) hireBtn.addEventListener('click', (e) => {
@@ -1789,11 +1982,19 @@
     const staffMaxed = progress.staffDiscountLevel >= MAX_UPGRADE_LEVEL;
     staffDiscountUpgradeBtn.disabled = staffMaxed || state.cash < staffCost;
     jukeboxUpgradeBtn.disabled = progress.jukebox || state.cash < 100;
+    iceCreamUpgradeBtn.disabled = progress.iceCreamCabinet || state.cash < 300;
+    sundaeSpeedUpgradeBtn.disabled = !progress.iceCreamCabinet || progress.sundaeFast || state.cash < 100;
+    milkshakeUnlockBtn.disabled = !progress.iceCreamCabinet || progress.milkshakeUnlocked || state.cash < 100;
+    milkshakeSpeedUpgradeBtn.disabled = !progress.milkshakeUnlocked || progress.milkshakeFast || state.cash < 120;
     doughUpgradeBtn.classList.toggle('purchased', doughMaxed);
     ovenUpgradeBtn.classList.toggle('purchased', ovenMaxed);
     sodaUpgradeBtn.classList.toggle('purchased', progress.sodaCabinet);
     staffDiscountUpgradeBtn.classList.toggle('purchased', staffMaxed);
     jukeboxUpgradeBtn.classList.toggle('purchased', progress.jukebox);
+    iceCreamUpgradeBtn.classList.toggle('purchased', progress.iceCreamCabinet);
+    sundaeSpeedUpgradeBtn.classList.toggle('purchased', progress.sundaeFast);
+    milkshakeUnlockBtn.classList.toggle('purchased', progress.milkshakeUnlocked);
+    milkshakeSpeedUpgradeBtn.classList.toggle('purchased', progress.milkshakeFast);
     doughUpgradeBtn.querySelector('strong').textContent = 'Faster dough · Level ' + progress.doughLevel;
     ovenUpgradeBtn.querySelector('strong').textContent = 'Faster oven · Level ' + progress.ovenLevel;
     doughUpgradeBtn.querySelector('span').textContent = doughMaxed ? 'Maximum level · +80% speed' : 'Upgrade to Level ' + doughNext + ' · +20% speed · ' + money(doughCost);
@@ -1802,6 +2003,10 @@
     staffDiscountUpgradeBtn.querySelector('strong').textContent = 'Cheaper staff · Level ' + progress.staffDiscountLevel;
     staffDiscountUpgradeBtn.querySelector('span').textContent = staffMaxed ? 'Maximum level · 67% total discount' : 'Upgrade to Level ' + staffNext + ' · 20% cheaper · ' + money(staffCost);
     jukeboxUpgradeBtn.querySelector('span').textContent = progress.jukebox ? 'Purchased · Patience drains 25% slower' : 'Customers lose patience 25% slower · $100';
+    iceCreamUpgradeBtn.querySelector('span').textContent = progress.iceCreamCabinet ? 'Purchased · Sundae service active' : 'Unlock Sundae service · $300';
+    sundaeSpeedUpgradeBtn.querySelector('span').textContent = progress.sundaeFast ? 'Purchased · Prep time 2s' : progress.iceCreamCabinet ? 'Prep time 3s → 2s · $100' : 'Requires ice cream cabinet';
+    milkshakeUnlockBtn.querySelector('span').textContent = progress.milkshakeUnlocked ? 'Purchased · Sells for $6' : progress.iceCreamCabinet ? 'Unlock Milkshake · $100' : 'Requires ice cream cabinet';
+    milkshakeSpeedUpgradeBtn.querySelector('span').textContent = progress.milkshakeFast ? 'Purchased · Prep time 2s' : progress.milkshakeUnlocked ? 'Prep time 3s → 2s · $120' : 'Requires Milkshake';
     recipeButtons.forEach((button) => {
       const id = button.dataset.recipe, unlocked = progress.unlockedRecipes.has(id);
       const cost = RECIPES[id].unlockCost || 0;
@@ -1827,6 +2032,10 @@
     const staffCost = STAFF_DISCOUNT_COSTS[progress.staffDiscountLevel + 1];
     if (staffCost && state.cash >= staffCost) count++;
     if (!progress.jukebox && state.cash >= 100) count++;
+    if (!progress.iceCreamCabinet && state.cash >= 300) count++;
+    if (progress.iceCreamCabinet && !progress.sundaeFast && state.cash >= 100) count++;
+    if (progress.iceCreamCabinet && !progress.milkshakeUnlocked && state.cash >= 100) count++;
+    if (progress.milkshakeUnlocked && !progress.milkshakeFast && state.cash >= 120) count++;
     for (const id of Object.keys(RECIPES)) {
       if (!progress.unlockedRecipes.has(id) && state.cash >= (RECIPES[id].unlockCost || 0)) count++;
     }
@@ -1883,6 +2092,22 @@
     state.cash -= 100;
     progress.jukebox = true;
     refreshReportOptions();
+  });
+  iceCreamUpgradeBtn.addEventListener('click', () => {
+    if (progress.iceCreamCabinet || state.cash < 300) return;
+    state.cash -= 300; progress.iceCreamCabinet = true; refreshReportOptions(); syncHireUI();
+  });
+  sundaeSpeedUpgradeBtn.addEventListener('click', () => {
+    if (!progress.iceCreamCabinet || progress.sundaeFast || state.cash < 100) return;
+    state.cash -= 100; progress.sundaeFast = true; refreshReportOptions();
+  });
+  milkshakeUnlockBtn.addEventListener('click', () => {
+    if (!progress.iceCreamCabinet || progress.milkshakeUnlocked || state.cash < 100) return;
+    state.cash -= 100; progress.milkshakeUnlocked = true; refreshReportOptions();
+  });
+  milkshakeSpeedUpgradeBtn.addEventListener('click', () => {
+    if (!progress.milkshakeUnlocked || progress.milkshakeFast || state.cash < 120) return;
+    state.cash -= 120; progress.milkshakeFast = true; refreshReportOptions();
   });
 
   recipeButtons.forEach((button) => button.addEventListener('click', () => {
@@ -1942,6 +2167,8 @@
       refreshReportOptions();
     }
     ingredientOptions.classList.add('hidden');
+    drinkOptions.classList.add('hidden');
+    dessertOptions.classList.add('hidden');
     hireWrap.classList.toggle('paused', paused);
     last = performance.now();
     if (!paused && audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
@@ -1972,6 +2199,7 @@
     updatePlayer(dt);
     syncIngredientDropdown();
     syncDrinkDropdown();
+    syncDessertDropdown();
     syncOfficeCue();
     updateOven(dt);
     assignJobs();
@@ -2001,7 +2229,7 @@
     syncHireUI();
   }
   function render() {
-    drawFloor(); drawBin(); drawPickup(); drawSodaCabinet(); drawJukebox(); drawTables(); drawTrashPiles();
+    drawFloor(); drawBin(); drawPickup(); drawSodaCabinet(); drawIceCreamCabinet(); drawJukebox(); drawTables(); drawTrashPiles();
     for (const s of STATIONS) drawStation(s);
     const people = [];
     for (const c of state.customers) people.push({ y: c.y, d: () => drawCustomer(c) });
@@ -2028,6 +2256,7 @@
     if (gameControls) gameControls.classList.remove('hidden');
     if (ingredientDropdown) ingredientDropdown.classList.remove('hidden');
     if (drinkDropdown) drinkDropdown.classList.remove('hidden');
+    if (dessertDropdown) dessertDropdown.classList.remove('hidden');
     last = performance.now();
     requestAnimationFrame(frame);
   }
