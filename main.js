@@ -603,7 +603,17 @@
   }
 
   function advanceCompletedOrder(c) {
-    if (!c.pizzaDelivered || (c.orderedDrink && !c.drinkDelivered) || (c.orderedDessert && !c.dessertDelivered)) return false;
+    if (!c.pizzaDelivered || (c.orderedDrink && !c.drinkDelivered)) return false;
+    if (!c.dessertDecisionMade) {
+      c.dessertDecisionMade = true;
+      const dessertIds = availableDessertIds();
+      if (dessertIds.length && Math.random() < 0.3) {
+        c.dessertId = dessertIds[(Math.random() * dessertIds.length) | 0];
+        c.orderedDessert = true;
+        return false;
+      }
+    }
+    if (c.orderedDessert && !c.dessertDelivered) return false;
     c.claimedBy = null;
     c.drinkClaimedBy = null;
     c.dessertClaimedBy = null;
@@ -864,8 +874,6 @@
     const recipeId = recipeIds[(Math.random() * recipeIds.length) | 0];
     const drinkIds = Object.keys(DRINKS);
     const drinkId = progress.sodaCabinet && Math.random() < 0.5 ? drinkIds[(Math.random() * drinkIds.length) | 0] : null;
-    const dessertIds = availableDessertIds();
-    const dessertId = dessertIds.length && Math.random() < 0.35 ? dessertIds[(Math.random() * dessertIds.length) | 0] : null;
     const c = {
       id: Math.random(), recipeId, x: ENTRANCE.x, y: ENTRANCE.y, tx: seat.x, ty: seat.y,
       seat, takeaway, side: seat.side || 'n', table: seat.table || null, state: 'entering',
@@ -874,7 +882,7 @@
       maxPatience: (takeaway ? 42 : 55) * (hostActive ? 1.25 : 1),
       eatTimer: 0, payTimer: 0, bob: Math.random() * 6, claimedBy: null,
       drinkId, orderedDrink: !!drinkId, pizzaDelivered: false, drinkDelivered: false, drinkClaimedBy: null, chefOrderClaimedBy: null,
-      dessertId, orderedDessert: !!dessertId, dessertDelivered: false, dessertClaimedBy: null,
+      dessertId: null, orderedDessert: false, dessertDelivered: false, dessertClaimedBy: null, dessertDecisionMade: false,
       serviceElapsed: 0, firstServiceAt: null, pizzaServiceAt: Infinity,
       tipEligible: false, enteredRed: false, mood: null,
     };
