@@ -35,6 +35,7 @@
   const doughUpgradeBtn = document.getElementById('doughUpgrade');
   const ovenUpgradeBtn = document.getElementById('ovenUpgrade');
   const ovenCapacityUpgradeBtn = document.getElementById('ovenCapacityUpgrade');
+  const tableUpgradeBtn = document.getElementById('tableUpgrade');
   const sodaUpgradeBtn = document.getElementById('sodaUpgrade');
   const staffDiscountUpgradeBtn = document.getElementById('staffDiscountUpgrade');
   const jukeboxUpgradeBtn = document.getElementById('jukeboxUpgrade');
@@ -113,8 +114,7 @@
   const BIN = { x: 836, y: 252, r: 20, count: 0, capacity: 20, claimedBy: null };
 
   const TABLES = [];
-  [360, 620].forEach((tx, ti) => {
-    const cy = 372;
+  [[360, 372], [620, 372], [740, 490]].forEach(([tx, cy], ti) => {
     const table = { id: ti, x: tx, y: cy, r: 37, seats: null };
     const seats = [
       { x: tx, y: cy - 52, side: 'n', occupied: false, cust: null, table },
@@ -143,7 +143,7 @@
     spawnTimer: 3.5, time: 0, trafficMultiplier: 1.25, trafficTarget: 1.25, trafficRampRemaining: 0, cheatFlashTimer: 0,
   };
   const progress = {
-    doughLevel: 1, ovenLevel: 1, ovenSlots: 1, staffDiscountLevel: 0, sodaCabinet: false, jukebox: false,
+    doughLevel: 1, ovenLevel: 1, ovenSlots: 1, tableCount: 2, staffDiscountLevel: 0, sodaCabinet: false, jukebox: false,
     iceCreamCabinet: false, milkshakeUnlocked: false, sundaeFast: false, milkshakeFast: false,
     unlockedRecipes: new Set(['margherita']),
   };
@@ -182,6 +182,8 @@
   const OVEN_SLOT_COSTS = { 2: 100, 3: 400 };
   const OVEN_CUSTOMER_CAPS = { 1: 4, 2: 7, 3: 10 };
   const OVEN_TRAFFIC_MULTIPLIERS = { 1: 1.25, 2: 1, 3: 0.85 };
+  const activeTables = () => TABLES.slice(0, progress.tableCount);
+  const customerCapacity = () => OVEN_CUSTOMER_CAPS[progress.ovenSlots] + (progress.tableCount >= 3 ? 2 : 0);
   const dessertDuration = (id) => (id === 'sundae' ? progress.sundaeFast : progress.milkshakeFast) ? 2 : 3;
   const availableDessertIds = () => progress.iceCreamCabinet ? ['sundae'].concat(progress.milkshakeUnlocked ? ['milkshake'] : []) : [];
   const discountedStaffCost = (baseCost) => Math.max(1, Math.round(baseCost * Math.pow(0.8, progress.staffDiscountLevel)));
@@ -878,7 +880,7 @@
   /* ---------- customers ---------- */
   const CUST_COLORS = ['#d96b4a', '#5b8c5a', '#7b6cb0', '#c98a3a', '#4a90b0', '#b05a7a', '#6a8a3a'];
   function freeSeat() {
-    for (const t of TABLES) for (const s of t.seats)
+    for (const t of activeTables()) for (const s of t.seats)
       if (!s.occupied && !state.trash.some((tr) => tr.tableId === t.id)) return s;
     return null;
   }
@@ -957,7 +959,7 @@
     const step = Math.min(d, e.speed * dt);
     let nx = e.x + (dx / d) * step, ny = e.y + (dy / d) * step;
     nx = clamp(nx, 28, W - 28); ny = clamp(ny, 180, H - 18);
-    for (const t of TABLES) {
+    for (const t of activeTables()) {
       const dd = dist(nx, ny, t.x, t.y), min = t.r + e.r - 2;
       if (dd < min && dd > 0) { const a = Math.atan2(ny - t.y, nx - t.x); nx = t.x + Math.cos(a) * min; ny = t.y + Math.sin(a) * min; }
     }
@@ -1440,7 +1442,7 @@
       if (vx < 0) p.dir = -1; else if (vx > 0) p.dir = 1;
       let nx = p.x + vx * p.speed * dt, ny = p.y + vy * p.speed * dt;
       nx = clamp(nx, 28, W - 28); ny = clamp(ny, 180, H - 18);
-      for (const t of TABLES) {
+      for (const t of activeTables()) {
         const d = dist(nx, ny, t.x, t.y), min = t.r + p.r - 2;
         if (d < min && d > 0) { const a = Math.atan2(ny - t.y, nx - t.x); nx = t.x + Math.cos(a) * min; ny = t.y + Math.sin(a) * min; }
       }
@@ -1540,6 +1542,7 @@
       });
     } else drawOvenSlots(s, y);
   }
+  // Vector fallback placeholder: each unlocked mouth can later map to an oven-slot sprite/frame.
   function drawOvenSlots(ov, y) {
     const slotW = 66, slotH = 46, cy = y + 58;
     const slots = activeOvenSlots(ov);
@@ -1564,8 +1567,9 @@
       }
     });
   }
+  // Vector fallback placeholder: replace this function with table sprites without changing game state.
   function drawTables() {
-    for (const t of TABLES) {
+    for (const t of activeTables()) {
       for (const s of t.seats) { ctx.fillStyle = s.occupied ? '#6b3f2c' : C.chair; roundRect(s.x - 11, s.y - 11, 22, 22, 5); ctx.fill(); }
       ctx.fillStyle = C.table; ctx.beginPath(); ctx.arc(t.x, t.y, t.r, 0, 7); ctx.fill();
       ctx.fillStyle = C.tableTop; ctx.beginPath(); ctx.arc(t.x, t.y, t.r - 6, 0, 7); ctx.fill();
@@ -2028,6 +2032,7 @@
     const ovenSlotCost = OVEN_SLOT_COSTS[ovenSlotNext] || 0;
     const ovenCapacityMaxed = progress.ovenSlots >= 3;
     ovenCapacityUpgradeBtn.disabled = ovenCapacityMaxed || state.cash < ovenSlotCost;
+    tableUpgradeBtn.disabled = progress.tableCount >= 3 || progress.ovenSlots < 3 || state.cash < 300;
     sodaUpgradeBtn.disabled = progress.sodaCabinet || state.cash < 150;
     const staffNext = progress.staffDiscountLevel + 1;
     const staffCost = STAFF_DISCOUNT_COSTS[staffNext] || 0;
@@ -2041,6 +2046,7 @@
     doughUpgradeBtn.classList.toggle('purchased', doughMaxed);
     ovenUpgradeBtn.classList.toggle('purchased', ovenMaxed);
     ovenCapacityUpgradeBtn.classList.toggle('purchased', ovenCapacityMaxed);
+    tableUpgradeBtn.classList.toggle('purchased', progress.tableCount >= 3);
     sodaUpgradeBtn.classList.toggle('purchased', progress.sodaCabinet);
     staffDiscountUpgradeBtn.classList.toggle('purchased', staffMaxed);
     jukeboxUpgradeBtn.classList.toggle('purchased', progress.jukebox);
@@ -2053,7 +2059,8 @@
     doughUpgradeBtn.querySelector('span').textContent = doughMaxed ? 'Maximum level · +80% speed' : 'Upgrade to Level ' + doughNext + ' · +20% speed · ' + money(doughCost);
     ovenUpgradeBtn.querySelector('span').textContent = ovenMaxed ? 'Maximum level · +80% speed' : 'Upgrade to Level ' + ovenNext + ' · +20% speed · ' + money(ovenCost);
     ovenCapacityUpgradeBtn.querySelector('strong').textContent = 'Oven capacity · ' + progress.ovenSlots + (progress.ovenSlots === 1 ? ' slot' : ' slots');
-    ovenCapacityUpgradeBtn.querySelector('span').textContent = ovenCapacityMaxed ? 'Maximum capacity · 10 customer cap' : 'Unlock slot ' + ovenSlotNext + ' · ' + money(ovenSlotCost) + ' · customer cap ' + OVEN_CUSTOMER_CAPS[ovenSlotNext];
+    ovenCapacityUpgradeBtn.querySelector('span').textContent = ovenCapacityMaxed ? 'Maximum oven capacity · customer cap ' + customerCapacity() : 'Unlock slot ' + ovenSlotNext + ' · ' + money(ovenSlotCost) + ' · customer cap ' + OVEN_CUSTOMER_CAPS[ovenSlotNext];
+    tableUpgradeBtn.querySelector('span').textContent = progress.tableCount >= 3 ? 'Purchased · 12 customer cap' : progress.ovenSlots < 3 ? 'Requires 3 oven slots · $300' : '4 more seats · customer cap 10 → 12 · $300';
     sodaUpgradeBtn.querySelector('span').textContent = progress.sodaCabinet ? 'Purchased · Coke, Water, Dew' : 'Permanent drinks service · $150';
     staffDiscountUpgradeBtn.querySelector('strong').textContent = 'Cheaper staff · Level ' + progress.staffDiscountLevel;
     staffDiscountUpgradeBtn.querySelector('span').textContent = staffMaxed ? 'Maximum level · 67% total discount' : 'Upgrade to Level ' + staffNext + ' · 20% cheaper · ' + money(staffCost);
@@ -2085,6 +2092,7 @@
     if (ovenCost && state.cash >= ovenCost) count++;
     const ovenSlotCost = OVEN_SLOT_COSTS[progress.ovenSlots + 1];
     if (ovenSlotCost && state.cash >= ovenSlotCost) count++;
+    if (progress.ovenSlots >= 3 && progress.tableCount < 3 && state.cash >= 300) count++;
     if (!progress.sodaCabinet && state.cash >= 150) count++;
     const staffCost = STAFF_DISCOUNT_COSTS[progress.staffDiscountLevel + 1];
     if (staffCost && state.cash >= staffCost) count++;
@@ -2138,6 +2146,12 @@
     progress.ovenSlots = next;
     state.trafficTarget = OVEN_TRAFFIC_MULTIPLIERS[next];
     state.trafficRampRemaining = 30;
+    refreshReportOptions();
+  });
+  tableUpgradeBtn.addEventListener('click', () => {
+    if (progress.tableCount >= 3 || progress.ovenSlots < 3 || state.cash < 300) return;
+    state.cash -= 300;
+    progress.tableCount = 3;
     refreshReportOptions();
   });
   sodaUpgradeBtn.addEventListener('click', () => {
@@ -2284,7 +2298,7 @@
     state.chefs = state.chefs.filter((c) => !c.remove);
     state.spawnTimer -= dt;
     if (state.spawnTimer <= 0) {
-      const cap = OVEN_CUSTOMER_CAPS[progress.ovenSlots];
+      const cap = customerCapacity();
       if (activeCustomerCount() < cap) {
         spawnCustomer();
         const range = reputationSpawnRange();
