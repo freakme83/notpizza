@@ -138,6 +138,35 @@
     { x: 80, y: 585, occupied: false, cust: null },
   ];
   const ENTRANCE = { x: 480, y: 612 };
+  const WAITER_IDLE_SPOTS = [{ x: 540, y: 250 }, { x: 600, y: 250 }, { x: 660, y: 250 }, { x: 720, y: 250 }];
+  const RUNNER_IDLE_SPOTS = [{ x: 810, y: 270 }, { x: 810, y: 310 }, { x: 810, y: 350 }];
+  const CHEF_IDLE_SPOTS = [{ x: 180, y: 235 }, { x: 240, y: 235 }, { x: 300, y: 235 }, { x: 360, y: 235 }, { x: 420, y: 235 }];
+  const CHEF_PREP_SPOTS = [{ x: 180, y: 182 }, { x: 240, y: 182 }, { x: 300, y: 182 }, { x: 360, y: 182 }, { x: 420, y: 182 }];
+
+  function overflowStaffSpot(spots, index, rowGap = 28) {
+    if (index < spots.length) return spots[index];
+    const base = spots[index % spots.length];
+    return { x: base.x, y: base.y + (Math.floor(index / spots.length) * rowGap) };
+  }
+  const waiterIdlePoint = (w) => overflowStaffSpot(w.drinksOnly ? RUNNER_IDLE_SPOTS : WAITER_IDLE_SPOTS, w.roleSlot, w.drinksOnly ? 24 : 28);
+  const chefIdlePoint = (chef) => overflowStaffSpot(CHEF_IDLE_SPOTS, chef.idleSlot, 28);
+  function ovenWorkPoint(slotIndex) {
+    const count = progress.ovenSlots;
+    const spacing = count === 3 ? 84 : count === 2 ? 104 : 0;
+    return { x: oven().cx + (slotIndex - (count - 1) / 2) * spacing, y: oven().use.y };
+  }
+  function claimChefPrepSpot(chef) {
+    if (chef.prepSpot >= 0) return;
+    const used = new Set(state.chefs.filter((other) => other !== chef && other.prepSpot >= 0).map((other) => other.prepSpot));
+    let index = 0;
+    while (used.has(index)) index++;
+    chef.prepSpot = index;
+  }
+  const chefPrepPoint = (chef) => overflowStaffSpot(CHEF_PREP_SPOTS, Math.max(0, chef.prepSpot), 28);
+  function stationWorkPoint(station, w) {
+    const offsets = [-22, 0, 22];
+    return { x: station.use.x - 12, y: station.use.y + offsets[w.roleSlot % offsets.length] };
+  }
 
   /* ---------- state ---------- */
   let waiterSeq = 0, chefSeq = 0;
@@ -992,11 +1021,14 @@
     if ((drinksOnly && !progress.sodaCabinet && !progress.iceCreamCabinet) || state.cash < cost) return;
     state.cash -= cost; shift.stats.staffCosts += cost;
     const base = state.player.speed / 2;
+    const usedRoleSlots = new Set(state.waiters.filter((waiter) => waiter.drinksOnly === drinksOnly && !waiter.remove).map((waiter) => waiter.roleSlot));
+    let roleSlot = 0;
+    while (usedRoleSlots.has(roleSlot)) roleSlot++;
     const w = {
       id: ++waiterSeq, x: ENTRANCE.x, y: ENTRANCE.y, r: 13,
       speed: base * (fast ? 1.3 : 1), fast, drinksOnly,
       hands: [null, null], state: 'enter', action: null, targetSlot: -1, targetCust: null, targetTrash: null, targetDrinkCust: null, targetDessertCust: null,
-      timer: WAITER_DURATION, walk: 0,
+      timer: WAITER_DURATION, walk: 0, roleSlot,
     };
     state.waiters.push(w); SND.hire();
   }
@@ -1049,7 +1081,7 @@
       if (carriedTrashHand(w) >= 0 && hasFreeHand(w) >= 0 && state.trash.some((t) => t.claimedBy === null)) { w.state = 'totrash'; return; }
       if (carriedTrashHand(w) >= 0) { w.state = 'tobin'; return; }
       if (hasFreeHand(w) >= 0 && state.trash.some((t) => t.claimedBy === null)) { w.state = 'totrash'; return; }
-      const idle = progress.sodaCabinet ? SODA.use : ICE_CREAM.use;
+      const idle = waiterIdlePoint(w);
       moveEntity(w, idle.x, idle.y, dt); return;
     }
     if (!w.drinksOnly && carriedPizzaHand(w) >= 0) { w.state = 'tocust'; return; }
@@ -1077,7 +1109,8 @@
       const target = mostUrgentDessertCustomer(null, w.id);
       if (target) { target.dessertClaimedBy = w.id; w.targetDessertCust = target; w.state = 'toicecreamcabinet'; return; }
     }
-    moveEntity(w, w.drinksOnly ? SODA.use.x : 660, w.drinksOnly ? SODA.use.y : 250, dt);
+    const idle = waiterIdlePoint(w);
+    moveEntity(w, idle.x, idle.y, dt);
   }
 
   function updateWaiter(w, dt) {
@@ -1092,7 +1125,7 @@
       }
     }
 
-    if (w.state === 'enter') { if (moveEntity(w, 660, 250, dt)) w.state = 'seek'; return; }
+    if (w.state === 'enter') { const idle = waiterIdlePoint(w); if (moveEntity(w, idle.x, idle.y, dt)) w.state = 'seek'; return; }
 
     if (w.state === 'makingdessert') {
       const target = w.targetDessertCust;
@@ -1133,7 +1166,8 @@
     if (w.state === 'tooven') {
       const ov = oven(); const s = ov.slots[w.targetSlot];
       if (!s || !s.pizza || !s.done || s.claimedBy !== w.id) { w.targetSlot = -1; w.state = 'seek'; return; }
-      if (moveEntity(w, ov.use.x, ov.use.y, dt)) {
+      const work = ovenWorkPoint(w.targetSlot);
+      if (moveEntity(w, work.x, work.y, dt)) {
         const pz = takeReadyOvenSlot(w.targetSlot, w.id);
         if (pz) { const fh = hasFreeHand(w); if (fh >= 0) w.hands[fh] = { t: 'pizza', pz }; SND.done(); }
         w.targetSlot = -1; w.state = 'seek';
@@ -1216,7 +1250,8 @@
         if (target && target.drinkClaimedBy === w.id) target.drinkClaimedBy = null;
         w.targetDrinkCust = null; w.state = 'seek'; return;
       }
-      if (moveEntity(w, SODA.use.x, SODA.use.y, dt)) {
+      const work = stationWorkPoint(SODA, w);
+      if (moveEntity(w, work.x, work.y, dt)) {
         const hand = hasFreeHand(w);
         if (hand >= 0) w.hands[hand] = { t: 'drink', id: target.drinkId };
         w.state = 'todrinkcust';
@@ -1252,7 +1287,8 @@
         if (target && target.dessertClaimedBy === w.id) target.dessertClaimedBy = null;
         w.targetDessertCust = null; w.state = 'seek'; return;
       }
-      if (moveEntity(w, ICE_CREAM.use.x, ICE_CREAM.use.y, dt)) {
+      const work = stationWorkPoint(ICE_CREAM, w);
+      if (moveEntity(w, work.x, work.y, dt)) {
         w.action = { elapsed: 0, duration: dessertDuration(target.dessertId), label: 'Make ' + DESSERTS[target.dessertId].name };
         w.state = 'makingdessert';
       }
@@ -1314,10 +1350,13 @@
     const cost = discountedStaffCost(CHEF_COST);
     if (state.cash < cost) return;
     state.cash -= cost; shift.stats.staffCosts += cost;
+    const usedIdleSlots = new Set(state.chefs.filter((chef) => !chef.remove).map((chef) => chef.idleSlot));
+    let idleSlot = 0;
+    while (usedIdleSlots.has(idleSlot)) idleSlot++;
     state.chefs.push({
       id: ++chefSeq, x: ENTRANCE.x, y: ENTRANCE.y, r: 13, speed: state.player.speed * 0.8,
       hands: [null, null], state: 'enter', action: null, pending: null, targetSlot: -1, handSlot: -1,
-      timer: CHEF_DURATION, walk: 0,
+      timer: CHEF_DURATION, walk: 0, idleSlot, prepSpot: -1,
     });
     SND.hire();
   }
@@ -1405,25 +1444,26 @@
           if (customer && customer.chefOrderClaimedBy === chef.id) customer.chefOrderClaimedBy = null;
         }
         chef.state = 'leave';
+        chef.prepSpot = -1;
         showStaffShiftNotice('chef');
         return;
       }
     }
-    if (chef.state === 'enter') { if (moveEntity(chef, prep().use.x, 250, dt)) chef.state = 'seekwork'; return; }
+    if (chef.state === 'enter') { const idle = chefIdlePoint(chef); if (moveEntity(chef, idle.x, idle.y, dt)) chef.state = 'seekwork'; return; }
     if (chef.state === 'leave') {
       for (let i = 0; i < chef.hands.length; i++) { const h = chef.hands[i]; if (h && h.t === 'pizza') { if (pizzaReadyToBake(h.pz)) returnPizzaToOven(h.pz); chef.hands[i] = null; } }
-      if (chef.action) chef.action = null; if (chef.pending) chef.pending = null;
+      if (chef.action) chef.action = null; if (chef.pending) chef.pending = null; chef.prepSpot = -1;
       if (moveEntity(chef, ENTRANCE.x, H - 18, dt)) chef.remove = true;
       return;
     }
     if (chef.state === 'prepping') {
       chef.action.elapsed += dt;
-      if (chef.action.elapsed >= chef.action.duration) { const cb = chef.action.onComplete; chef.action = null; chef.state = 'seekwork'; cb && cb(); }
+      if (chef.action.elapsed >= chef.action.duration) { const cb = chef.action.onComplete; chef.action = null; chef.prepSpot = -1; chef.state = 'seekwork'; cb && cb(); }
       return;
     }
-    if (chef.state === 'toprep') { if (moveEntity(chef, prep().use.x, prep().use.y, dt)) startChefPrep(chef); return; }
-    if (chef.state === 'tooven') { if (moveEntity(chef, oven().use.x, oven().use.y, dt)) { placeChefPizza(chef); chef.state = 'seekwork'; } return; }
-    if (chef.state === 'seekwork') { chefNext(chef); if (chef.state === 'seekwork') moveEntity(chef, prep().use.x, 250, dt); return; }
+    if (chef.state === 'toprep') { claimChefPrepSpot(chef); const work = chefPrepPoint(chef); if (moveEntity(chef, work.x, work.y, dt)) startChefPrep(chef); return; }
+    if (chef.state === 'tooven') { const work = ovenWorkPoint(chef.targetSlot); if (moveEntity(chef, work.x, work.y, dt)) { placeChefPizza(chef); chef.state = 'seekwork'; } return; }
+    if (chef.state === 'seekwork') { chefNext(chef); if (chef.state === 'seekwork') { const idle = chefIdlePoint(chef); moveEntity(chef, idle.x, idle.y, dt); } return; }
   }
 
   /* ---------- player update ---------- */
