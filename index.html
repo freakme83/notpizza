@@ -13,6 +13,7 @@
     />
     <link rel="stylesheet" href="styles.css" />
     <link rel="preload" href="assets/player-sprite-sheet-v2.png" as="image" type="image/png" />
+    <link rel="preload" href="assets/floor-tiles-v1.png" as="image" type="image/png" />
   </head>
   <body>
     <div id="wrap">
@@ -44,6 +45,8 @@
         <div class="report-options">
           <button id="doughUpgrade" class="option-card" type="button"><strong>Faster dough · Level 1</strong><span>Upgrade to Level 2</span></button>
           <button id="ovenUpgrade" class="option-card" type="button"><strong>Faster oven · Level 1</strong><span>Upgrade to Level 2</span></button>
+          <button id="ovenCapacityUpgrade" class="option-card" type="button"><strong>Oven capacity · 1 slot</strong><span>Unlock second slot · $100</span></button>
+          <button id="tableUpgrade" class="option-card" type="button"><strong>Third table</strong><span>Requires 3 oven slots · $300</span></button>
           <button id="sodaUpgrade" class="option-card" type="button"><strong>Soda cabinet</strong><span>Permanent drinks service · $150</span></button>
           <button id="staffDiscountUpgrade" class="option-card" type="button"><strong>Cheaper staff · Level 0</strong><span>Unlock Level 1 · $50</span></button>
           <button id="jukeboxUpgrade" class="option-card" type="button"><strong>Jukebox</strong><span>Customers lose patience 25% slower · $100</span></button>
@@ -103,6 +106,6 @@
         <span>click to start</span>
       </div>
     </div>
-    <script src="main.js?v=ice-cream-station"></script>
+    <script src="main.js?v=staff-position-slots"></script>
   </body>
 </html>
