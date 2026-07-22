@@ -52,6 +52,11 @@
   playerSprite.addEventListener('load', () => { playerSpriteReady = true; });
   playerSprite.addEventListener('error', () => { playerSpriteReady = false; });
   playerSprite.src = 'assets/player-sprite-sheet-v2.png';
+  const floorTiles = new Image();
+  let floorTilesReady = false;
+  floorTiles.addEventListener('load', () => { floorTilesReady = true; });
+  floorTiles.addEventListener('error', () => { floorTilesReady = false; });
+  floorTiles.src = 'assets/floor-tiles-v1.png';
 
   /* ---------- palette (warm pizzeria) ---------- */
   const C = {
@@ -1464,7 +1469,14 @@
   function drawFloor() {
     const ts = 48;
     for (let y = 0; y < H; y += ts) for (let x = 0; x < W; x += ts) {
-      ctx.fillStyle = (((x / ts) + (y / ts)) | 0) % 2 ? C.floor1 : C.floor2; ctx.fillRect(x, y, ts, ts);
+      if (floorTilesReady) {
+        const tx = x / ts, ty = y / ts;
+        const variant = Math.abs(tx * 17 + ty * 31 + tx * ty * 7) % 4;
+        ctx.drawImage(floorTiles, (variant % 2) * ts, Math.floor(variant / 2) * ts, ts, ts, x, y, ts, ts);
+      } else {
+        ctx.fillStyle = (((x / ts) + (y / ts)) | 0) % 2 ? C.floor1 : C.floor2;
+        ctx.fillRect(x, y, ts, ts);
+      }
     }
     ctx.fillStyle = C.wall; ctx.fillRect(0, 0, W, 60);
     ctx.fillStyle = C.wallTrim; ctx.fillRect(0, 58, W, 5);
@@ -1800,17 +1812,17 @@
     };
     const task = taskLabels[w.state];
     if (task) {
-      ctx.font = "700 9px 'Inter', sans-serif";
+      ctx.font = "italic 600 9px 'Inter', sans-serif";
       const bubbleW = ctx.measureText(task).width + 14;
       const bubbleY = w.y - (carried.length ? 48 : 36);
-      ctx.fillStyle = 'rgba(255,250,239,0.96)';
+      ctx.fillStyle = 'rgba(255,250,239,0.68)';
       roundRect(w.x - bubbleW / 2, bubbleY - 9, bubbleW, 18, 7); ctx.fill();
       ctx.beginPath();
       ctx.moveTo(w.x - 3, bubbleY + 8);
       ctx.lineTo(w.x + 3, bubbleY + 8);
       ctx.lineTo(w.x, bubbleY + 13);
       ctx.closePath(); ctx.fill();
-      ctx.fillStyle = C.text; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillStyle = 'rgba(58,42,26,0.72)'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillText(task, w.x, bubbleY);
     }
   }
