@@ -520,6 +520,21 @@ canvas#game {
   gap: 8px;
 }
 
+.hire-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 10px 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(104, 227, 189, 0.22);
+  border-radius: 10px;
+  background: rgba(5, 8, 28, 0.28);
+}
+
+.hire-summary strong { color: #68e3bd; font-size: 0.82rem; }
+.hire-summary span { color: #aeb7dc; font-size: 0.74rem; font-weight: 700; }
+
 .hire-options .off {
   opacity: 0.42;
   cursor: not-allowed;
@@ -535,6 +550,7 @@ canvas#game {
   background: rgba(7, 11, 35, 0.46);
   box-shadow: none;
   text-align: left;
+  transition: transform 120ms ease, border-color 120ms ease, background 120ms ease;
 }
 
 #hireMenu.hire-options button:hover:not(:disabled) {
@@ -547,10 +563,113 @@ canvas#game {
   background: rgba(7, 11, 35, 0.35) !important;
 }
 
+.hire-active {
+  margin-top: 3px;
+  color: #68e3bd;
+  font: normal 700 0.68rem/1.25 'Inter', sans-serif;
+}
+
+#hireMenu.hire-options button.just-hired {
+  border-color: #68e3bd;
+  background: rgba(104, 227, 189, 0.16) !important;
+  opacity: 1;
+  box-shadow: inset 0 0 0 1px rgba(104, 227, 189, 0.28);
+}
+
+.hire-toast {
+  position: absolute;
+  right: 24px;
+  bottom: 22px;
+  z-index: 12;
+  padding: 10px 15px;
+  border: 1px solid rgba(104, 227, 189, 0.55);
+  border-radius: 999px;
+  color: #10263a;
+  background: #68e3bd;
+  font: 900 0.78rem 'Inter', sans-serif;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.3);
+  animation: hireToastIn 160ms ease-out;
+}
+
+.hire-toast.hidden { display: none; }
+
+@keyframes hireToastIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
 #pauseOverlay .report-note,
 #pauseOverlay .option-card span {
   color: #aeb7dc;
 }
+
+.confirm-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(4, 6, 20, 0.76);
+}
+
+.confirm-overlay.hidden { display: none; }
+
+.confirm-card {
+  position: relative;
+  display: flex;
+  width: min(430px, 100%);
+  flex-direction: column;
+  gap: 8px;
+  padding: 26px;
+  border: 1px solid rgba(255, 111, 125, 0.42);
+  border-radius: 18px;
+  color: #f7f5ff;
+  background: linear-gradient(145deg, #292554, #342039);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.55);
+}
+
+.confirm-kicker {
+  color: #ff8793;
+  font-size: 0.66rem;
+  font-weight: 900;
+  letter-spacing: 0.14em;
+}
+
+.confirm-card > strong { font: 700 1.55rem 'Barlow Condensed', sans-serif; }
+.confirm-card > span { color: #bfc5df; font-size: 0.8rem; font-weight: 700; }
+
+.confirm-close {
+  position: absolute;
+  top: 11px;
+  right: 13px;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 50%;
+  color: #cbd2ee;
+  background: rgba(255, 255, 255, 0.08);
+  font: 500 1.35rem/1 'Inter', sans-serif;
+  cursor: pointer;
+}
+
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.confirm-actions button {
+  padding: 10px 15px;
+  border: 0;
+  border-radius: 999px;
+  font: 900 0.76rem 'Inter', sans-serif;
+  cursor: pointer;
+}
+
+.confirm-cancel { color: #e8eaff; background: rgba(255, 255, 255, 0.1); }
+.confirm-danger { color: #fff; background: linear-gradient(135deg, #ef3f5b, #d83473); }
 
 .primary-action {
   width: 100%;
@@ -571,6 +690,7 @@ canvas#game {
   #pauseOverlay { padding: 58px 18px 20px; }
   .office-heading { align-items: stretch; flex-direction: column; gap: 8px; }
   .shop-budget { width: 100%; }
+  .hire-summary { align-items: flex-start; flex-direction: column; gap: 3px; }
   .office-tab { padding-inline: 6px; font-size: 0.68rem; }
   .report-options,
   .recipe-options,
