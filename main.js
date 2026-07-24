@@ -275,10 +275,8 @@
   const bakeDuration = () => BASE_BAKE_DUR / speedMultiplier(progress.ovenLevel);
   const activeOvenSlots = (ov = oven()) => ov.slots.slice(0, progress.ovenSlots);
   const OVEN_SLOT_COSTS = { 2: 100, 3: 400 };
-  const OVEN_CUSTOMER_CAPS = { 1: 4, 2: 7, 3: 10 };
   const OVEN_TRAFFIC_MULTIPLIERS = { 1: 1.25, 2: 1, 3: 0.85 };
   const activeTables = () => TABLES.slice(0, progress.tableCount);
-  const customerCapacity = () => OVEN_CUSTOMER_CAPS[progress.ovenSlots] + (progress.tableCount >= 3 ? 2 : 0);
   const dessertDuration = (id) => (id === 'sundae' ? progress.sundaeFast : progress.milkshakeFast) ? 2 : 3;
   const availableDessertIds = () => progress.iceCreamCabinet ? ['sundae'].concat(progress.milkshakeUnlocked ? ['milkshake'] : []) : [];
   const discountedStaffCost = (baseCost) => Math.max(1, Math.round(baseCost * (1 - progress.staffDiscountLevel * 0.1)));
@@ -1032,7 +1030,7 @@
   function spawnCustomer() {
     const takeaway = Math.random() < 0.33;
     const queue = queuedCustomers();
-    const seat = queue.length === 0 && insideCustomerCount() < customerCapacity() ? (takeaway ? freeTakeaway() : freeSeat()) : null;
+    const seat = queue.length === 0 ? (takeaway ? freeTakeaway() : freeSeat()) : null;
     if (!seat && queue.length >= MAX_CUSTOMER_QUEUE) return false;
     const recipeIds = unlockedRecipeIds();
     const recipeId = recipeIds[(Math.random() * recipeIds.length) | 0];
@@ -1056,7 +1054,7 @@
     return true;
   }
   function admitQueuedCustomers() {
-    while (insideCustomerCount() < customerCapacity()) {
+    while (true) {
       const queue = queuedCustomers();
       let admitted = false;
       for (const c of queue) {
@@ -2646,8 +2644,8 @@
     doughUpgradeBtn.querySelector('span').textContent = doughMaxed ? 'Maximum level · +80% speed' : 'Upgrade to Level ' + doughNext + ' · +20% speed · ' + money(doughCost);
     ovenUpgradeBtn.querySelector('span').textContent = ovenMaxed ? 'Maximum level · +80% speed' : 'Upgrade to Level ' + ovenNext + ' · +20% speed · ' + money(ovenCost);
     ovenCapacityUpgradeBtn.querySelector('strong').textContent = 'Oven capacity · ' + progress.ovenSlots + (progress.ovenSlots === 1 ? ' slot' : ' slots');
-    ovenCapacityUpgradeBtn.querySelector('span').textContent = ovenCapacityMaxed ? 'Maximum oven capacity · customer cap ' + customerCapacity() : 'Unlock slot ' + ovenSlotNext + ' · ' + money(ovenSlotCost) + ' · customer cap ' + OVEN_CUSTOMER_CAPS[ovenSlotNext];
-    tableUpgradeBtn.querySelector('span').textContent = progress.tableCount >= 3 ? 'Purchased · 12 customer cap' : progress.ovenSlots < 3 ? 'Requires 3 oven slots · $300' : '4 more seats · customer cap 10 → 12 · $300';
+    ovenCapacityUpgradeBtn.querySelector('span').textContent = ovenCapacityMaxed ? 'Maximum oven capacity · bake 3 pizzas at once' : 'Unlock slot ' + ovenSlotNext + ' · ' + money(ovenSlotCost) + ' · bake one more pizza at once';
+    tableUpgradeBtn.querySelector('span').textContent = progress.tableCount >= 3 ? 'Purchased · 12 dining seats' : progress.ovenSlots < 3 ? 'Requires 3 oven slots · $300' : 'Add 4 more dining seats · $300';
     sodaUpgradeBtn.querySelector('span').textContent = progress.sodaCabinet ? 'Purchased · Coke, Water, Dew' : 'Permanent drinks service · $150';
     staffDiscountUpgradeBtn.querySelector('strong').textContent = 'Cheaper staff · Level ' + progress.staffDiscountLevel;
     staffDiscountUpgradeBtn.querySelector('span').textContent = staffMaxed ? 'Maximum level · 50% total discount' : 'Upgrade to Level ' + staffNext + ' · +10% total discount · ' + money(staffCost);
