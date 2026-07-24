@@ -1895,7 +1895,7 @@
     } else drawOvenSlots(s, y);
   }
   function drawSpritePrep(station) {
-    const layout = { sx: 39, sy: 98, sw: 690, sh: 341, dw: 220, dh: 108, x: station.cx - 110, y: 68 };
+    const layout = { sx: 39, sy: 98, sw: 690, sh: 341, dw: 220, dh: 108, x: station.cx - 110, y: 88 };
     ctx.drawImage(prepSprite, layout.sx, layout.sy, layout.sw, layout.sh, layout.x, layout.y, layout.dw, layout.dh);
     const socketRects = [
       { x: 122, y: 119, w: 94, h: 40 },
@@ -1913,7 +1913,8 @@
       const dy = layout.y + ((socket.y - layout.sy) / layout.sh) * layout.dh;
       const dw = (socket.w / layout.sw) * layout.dw;
       const dh = (socket.h / layout.sh) * layout.dh;
-      ctx.drawImage(prepIngredientsSprite, index * 96, 0, 96, 48, dx, dy, dw, dh);
+      const inset = 1.5;
+      ctx.drawImage(prepIngredientsSprite, index * 96 + 8, 9, 80, 30, dx + inset, dy + inset, dw - inset * 2, dh - inset * 2);
     });
     if (inStationRange(state.player, station)) {
       const nextIngredientIds = new Set();
@@ -1929,15 +1930,15 @@
         const cx = layout.x + (((socket.x + socket.w / 2) - layout.sx) / layout.sw) * layout.dw;
         const cy = layout.y + (((socket.y + socket.h / 2) - layout.sy) / layout.sh) * layout.dh;
         ctx.strokeStyle = 'rgba(126,190,75,0.9)'; ctx.lineWidth = 2;
-        roundRect(cx - 16, cy - 9, 32, 18, 5); ctx.stroke();
+        roundRect(cx - 16, cy - 8, 32, 16, 5); ctx.stroke();
       });
     }
   }
   function ovenSpriteLayout(count = progress.ovenSlots) {
     const layouts = {
-      1: { sx: 105, sy: 28, sw: 300, sh: 225, dw: 108, dh: 81, y: 93, mouths: [0.502] },
-      2: { sx: 60, sy: 273, sw: 390, sh: 235, dw: 165, dh: 100, y: 74, mouths: [0.276, 0.731] },
-      3: { sx: 25, sy: 523, sw: 460, sh: 230, dw: 210, dh: 105, y: 69, mouths: [0.217, 0.505, 0.793] },
+      1: { sx: 105, sy: 28, sw: 300, sh: 225, dw: 108, dh: 81, y: 113, mouths: [0.502] },
+      2: { sx: 60, sy: 273, sw: 390, sh: 235, dw: 165, dh: 100, y: 94, mouths: [0.276, 0.731] },
+      3: { sx: 25, sy: 523, sw: 460, sh: 230, dw: 210, dh: 105, y: 89, mouths: [0.217, 0.505, 0.793] },
     };
     const layout = layouts[count] || layouts[1];
     return Object.assign({ x: oven().cx - layout.dw / 2 }, layout);
