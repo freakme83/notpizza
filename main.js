@@ -5,9 +5,7 @@
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
   const startScreen = document.getElementById('start');
-  const hireBtn = document.getElementById('hireBtn');
   const hireMenu = document.getElementById('hireMenu');
-  const hireWrap = document.getElementById('hireWrap');
   const gameControls = document.getElementById('gameControls');
   const pauseBtn = document.getElementById('pauseBtn');
   const officeButtonTitle = document.getElementById('officeButtonTitle');
@@ -19,6 +17,10 @@
   const staffNotice = document.getElementById('staffNotice');
   const staffNoticeText = document.getElementById('staffNoticeText');
   const staffRoster = document.getElementById('staffRoster');
+  const staffNoticeClose = document.getElementById('staffNoticeClose');
+  const staffRehireBtn = document.getElementById('staffRehireBtn');
+  const officeTabs = [...document.querySelectorAll('[data-office-tab]')];
+  const officePanes = [...document.querySelectorAll('[data-office-pane]')];
   const ingredientDropdown = document.getElementById('ingredientDropdown');
   const ingredientToggle = document.getElementById('ingredientToggle');
   const ingredientOptions = document.getElementById('ingredientOptions');
@@ -846,7 +848,6 @@
 
   canvas.addEventListener('click', () => {
     if (!startScreen.classList.contains('hidden')) return;
-    if (hireMenu && !hireMenu.classList.contains('hidden')) { hireMenu.classList.add('hidden'); return; }
     tryInteract();
   });
 
@@ -1120,7 +1121,7 @@
       if (w.timer <= 0) {
         w.timer = 0;
         w.state = 'leave';
-        showStaffShiftNotice(waiterRole(w));
+        showStaffShiftNotice(w.drinksOnly ? 'drinks' : w.fast ? 'fast' : 'normal');
         return;
       }
     }
@@ -1971,33 +1972,37 @@
 
   /* ---------- hire menu UI ---------- */
   function syncHireUI() {
-    if (!hireBtn || !hireMenu) return;
-    const active = state.waiters.filter((w) => w.state !== 'leave').length
-                 + state.chefs.filter((c) => c.state !== 'leave').length
-                 + (hostActive ? 1 : 0);
-    hireBtn.textContent = 'Hire staff \u25BE' + (active > 0 ? '  (\u00D7' + active + ')' : '');
+    if (!hireMenu) return;
     hireMenu.querySelectorAll('button').forEach((b) => {
       const t = b.dataset.type;
       const baseCost = t === 'chef' ? CHEF_COST : t === 'host' ? HOST_COST : t === 'drinks' ? DRINKS_WAITER_COST : t === 'fast' ? FAST_WAITER_COST : WAITER_COST;
       const cost = discountedStaffCost(baseCost);
-      b.textContent = (t === 'chef' ? 'Chef' : t === 'host' ? 'Host' : t === 'drinks' ? 'Drinks runner' : t === 'fast' ? 'Fast waiter' : 'Waiter') + ' · ' + money(cost);
-      b.classList.toggle('off', state.cash < cost || (t === 'drinks' && !progress.sodaCabinet && !progress.iceCreamCabinet) || (t === 'host' && hostActive));
+      b.querySelector('strong').textContent = t === 'chef' ? 'Chef' : t === 'host' ? 'Host' : t === 'drinks' ? 'Drinks runner' : t === 'fast' ? 'Fast waiter' : 'Waiter';
+      b.querySelector('span').textContent = money(cost) + ' · 7 minute shift';
+      const unavailable = state.cash < cost || (t === 'drinks' && !progress.sodaCabinet && !progress.iceCreamCabinet) || (t === 'host' && hostActive);
+      b.disabled = unavailable;
+      b.classList.toggle('off', unavailable);
     });
   }
-  if (hireBtn) hireBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    if (!startScreen.classList.contains('hidden')) return;
-    hireMenu.classList.toggle('hidden');
-  });
   if (hireMenu) hireMenu.querySelectorAll('button').forEach((b) => {
     b.addEventListener('click', (e) => {
       e.stopPropagation();
       if (b.dataset.type === 'chef') hireChef();
       else if (b.dataset.type === 'host') hireHost();
       else hireWaiter(b.dataset.type);
-      hireMenu.classList.add('hidden');
+      refreshReportOptions();
     });
   });
+
+  officeTabs.forEach((tab) => tab.addEventListener('click', () => {
+    const target = tab.dataset.officeTab;
+    officeTabs.forEach((button) => {
+      const active = button === tab;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-selected', String(active));
+    });
+    officePanes.forEach((pane) => pane.classList.toggle('active', pane.dataset.officePane === target));
+  }));
 
 
   /* ---------- endless chaos, reputation and upgrades ---------- */
@@ -2048,7 +2053,6 @@
   function showGameOver() {
     if (shift.showingReport) return;
     shift.showingReport = true; Input.keys = {}; Input.pressed = {};
-    hireMenu.classList.add('hidden'); hireWrap.classList.add('paused');
     pauseOverlay.classList.add('hidden');
     updateOfficeButton(false, 0);
     paused = false;
@@ -2128,11 +2132,8 @@
       button.classList.toggle('purchased', unlocked);
       button.textContent = unlocked ? RECIPES[id].name + ' · Unlocked' : 'Unlock ' + RECIPES[id].name + ' · ' + money(cost);
     });
-    const spent = Math.max(0, shift.shoppingStartCash - Math.round(state.cash));
-    shopBudget.innerHTML =
-      '<div><span>Cash on pause</span><strong>' + money(shift.shoppingStartCash) + '</strong></div>' +
-      '<div><span>Spent this visit</span><strong>-' + money(spent) + '</strong></div>' +
-      '<div><span>Cash remaining</span><strong>' + money(state.cash) + '</strong></div>';
+    shopBudget.innerHTML = '<span>Cash</span><strong>' + money(state.cash) + '</strong>';
+    syncHireUI();
     syncOfficeCue();
   }
 
@@ -2278,12 +2279,40 @@
     if (hostActive) rows.push('<div><span>host</span><strong>' + staffTime(hostTimer) + '</strong></div>');
     staffRoster.innerHTML = rows.length ? rows.join('') : '<div class="empty-roster">No other staff on shift</div>';
   }
-  function showStaffShiftNotice(role) {
+  let expiredStaffType = null;
+  function staffLabel(type) {
+    return type === 'chef' ? 'chef' : type === 'host' ? 'host' : type === 'drinks' ? 'drinks runner' : type === 'fast' ? 'fast waiter' : 'waiter';
+  }
+  function staffCostFor(type) {
+    const base = type === 'chef' ? CHEF_COST : type === 'host' ? HOST_COST : type === 'drinks' ? DRINKS_WAITER_COST : type === 'fast' ? FAST_WAITER_COST : WAITER_COST;
+    return discountedStaffCost(base);
+  }
+  function showStaffShiftNotice(type) {
     setPaused(true);
-    staffNoticeText.textContent = 'Shift of the ' + role + ' is over.';
+    expiredStaffType = type;
+    const role = staffLabel(type);
+    const cost = staffCostFor(type);
+    staffNoticeText.textContent = 'The ' + role + "'s shift is over.";
+    staffRehireBtn.textContent = 'Hire again · ' + money(cost);
+    staffRehireBtn.disabled = state.cash < cost || (type === 'host' && hostActive) || (type === 'drinks' && !progress.sodaCabinet && !progress.iceCreamCabinet);
     refreshStaffRoster();
     staffNotice.classList.remove('hidden');
   }
+
+  function closeStaffNotice() {
+    staffNotice.classList.add('hidden');
+    expiredStaffType = null;
+  }
+  staffNoticeClose.addEventListener('click', closeStaffNotice);
+  staffRehireBtn.addEventListener('click', () => {
+    if (!expiredStaffType || staffRehireBtn.disabled) return;
+    const type = expiredStaffType;
+    if (type === 'chef') hireChef();
+    else if (type === 'host') hireHost();
+    else hireWaiter(type);
+    closeStaffNotice();
+    refreshReportOptions();
+  });
 
   function setPaused(nextPaused) {
     if (!started || shift.showingReport || paused === nextPaused) return;
@@ -2302,7 +2331,6 @@
     ingredientOptions.classList.add('hidden');
     drinkOptions.classList.add('hidden');
     dessertOptions.classList.add('hidden');
-    hireWrap.classList.toggle('paused', paused);
     last = performance.now();
     if (!paused && audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
   }
@@ -2390,7 +2418,6 @@
       audioCtx = null;
     }
     startScreen.classList.add('hidden');
-    if (hireWrap) hireWrap.classList.remove('hidden');
     if (gameControls) gameControls.classList.remove('hidden');
     if (ingredientDropdown) ingredientDropdown.classList.remove('hidden');
     if (drinkDropdown) drinkDropdown.classList.remove('hidden');
