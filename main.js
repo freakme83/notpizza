@@ -81,6 +81,16 @@
   ovenSprite.addEventListener('load', () => { ovenSpriteReady = true; });
   ovenSprite.addEventListener('error', () => { ovenSpriteReady = false; });
   ovenSprite.src = 'assets/oven-sprite-sheet-v1.png';
+  const prepSprite = new Image();
+  let prepSpriteReady = false;
+  prepSprite.addEventListener('load', () => { prepSpriteReady = true; });
+  prepSprite.addEventListener('error', () => { prepSpriteReady = false; });
+  prepSprite.src = 'assets/prep-station-v1.png';
+  const prepIngredientsSprite = new Image();
+  let prepIngredientsSpriteReady = false;
+  prepIngredientsSprite.addEventListener('load', () => { prepIngredientsSpriteReady = true; });
+  prepIngredientsSprite.addEventListener('error', () => { prepIngredientsSpriteReady = false; });
+  prepIngredientsSprite.src = 'assets/prep-ingredients-v1.png';
 
   /* ---------- palette (warm pizzeria) ---------- */
   const C = {
@@ -1859,6 +1869,10 @@
       drawSpriteOven(s);
       return;
     }
+    if (s.id === 'prep' && prepSpriteReady) {
+      drawSpritePrep(s);
+      return;
+    }
     ctx.fillStyle = C.counter; roundRect(x, y, s.w, s.h, 10); ctx.fill();
     ctx.fillStyle = C.counterTop; roundRect(x, y, s.w, 22, 10); ctx.fill(); ctx.fillRect(x, y + 8, s.w, 14);
     ctx.fillStyle = s.id === 'oven' ? C.oven : '#f0e3c0';
@@ -1879,6 +1893,35 @@
         ctx.globalAlpha = 1;
       });
     } else drawOvenSlots(s, y);
+  }
+  function drawSpritePrep(station) {
+    const layout = { sx: 39, sy: 98, sw: 690, sh: 341, dw: 260, dh: 128, x: station.cx - 130, y: 48 };
+    ctx.drawImage(prepSprite, layout.sx, layout.sy, layout.sw, layout.sh, layout.x, layout.y, layout.dw, layout.dh);
+    const sourceCenters = [102, 267, 432, 597, 762, 927];
+    const socketCenters = [169, 272, 375, 478, 580, 682];
+    const available = new Set(availableIngredients().map((ingredient) => ingredient.id));
+    INGREDIENTS.forEach((ingredient, index) => {
+      if (!available.has(ingredient.id) || !prepIngredientsSpriteReady) return;
+      const cx = layout.x + ((socketCenters[index] - layout.sx) / layout.sw) * layout.dw;
+      const cy = layout.y + ((138 - layout.sy) / layout.sh) * layout.dh;
+      ctx.drawImage(prepIngredientsSprite, sourceCenters[index] - 55, 154, 110, 196, cx - 14, cy - 9, 28, 18);
+    });
+    if (inStationRange(state.player, station)) {
+      const nextIngredientIds = new Set();
+      if (firstFreeHand() >= 0) nextIngredientIds.add('dough');
+      state.player.pizzas.forEach((pizza) => {
+        if (!pizza || pizza.baked) return;
+        const next = nextActionForPizza(pizza);
+        if (next) nextIngredientIds.add(next.ing.id);
+      });
+      INGREDIENTS.forEach((ingredient, index) => {
+        if (!nextIngredientIds.has(ingredient.id) || !available.has(ingredient.id)) return;
+        const cx = layout.x + ((socketCenters[index] - layout.sx) / layout.sw) * layout.dw;
+        const cy = layout.y + ((138 - layout.sy) / layout.sh) * layout.dh;
+        ctx.strokeStyle = 'rgba(126,190,75,0.9)'; ctx.lineWidth = 2;
+        roundRect(cx - 17, cy - 12, 34, 24, 6); ctx.stroke();
+      });
+    }
   }
   function ovenSpriteLayout(count = progress.ovenSlots) {
     const layouts = {
