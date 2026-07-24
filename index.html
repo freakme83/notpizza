@@ -72,6 +72,7 @@
             <button class="option-card accent-red" data-type="chef" type="button"><strong>Chef</strong><span>$80</span><em class="hire-active">None active</em></button>
             <button class="option-card accent-blue" data-type="drinks" type="button"><strong>Drinks runner</strong><span>$25</span><em class="hire-active">None active</em></button>
             <button class="option-card accent-orange" data-type="host" type="button"><strong>Host</strong><span>$30</span><em class="hire-active">None active</em></button>
+            <button class="option-card accent-mint" data-type="maintenance" type="button"><strong>Maintenance tech</strong><span>$40</span><em class="hire-active">None active</em></button>
           </div>
           <div id="hireToast" class="hire-toast hidden" role="status" aria-live="polite">Waiter hired!</div>
         </section>
@@ -109,6 +110,19 @@
         </div>
       </div>
 
+      <div id="breakdownPopup" class="confirm-overlay hidden" role="alertdialog" aria-modal="true" aria-labelledby="breakdownTitle">
+        <div class="confirm-card breakdown-card">
+          <button id="breakdownClose" class="confirm-close" type="button" aria-label="Close">×</button>
+          <p class="confirm-kicker">EQUIPMENT DOWN</p>
+          <strong id="breakdownTitle">Equipment needs service</strong>
+          <span id="breakdownDetails">Choose a service option. The equipment stays unavailable until repaired.</span>
+          <div class="confirm-actions service-actions">
+            <button id="regularServiceBtn" class="confirm-cancel" type="button">Regular · $25 · 60s</button>
+            <button id="fastServiceBtn" class="staff-rehire" type="button">Fast · $45 · 30s</button>
+          </div>
+        </div>
+      </div>
+
       <div id="drinkDropdown" class="ingredient-dropdown drink-dropdown hidden" aria-label="Choose drink">
         <button id="drinkToggle" type="button" aria-expanded="false">Drinks ▾</button>
         <div id="drinkOptions" class="ingredient-options hidden"></div>
@@ -139,6 +153,6 @@
         <span>click to start</span>
       </div>
     </div>
-    <script src="main.js?v=jukebox-sprite-and-notes"></script>
+    <script src="main.js?v=equipment-maintenance"></script>
   </body>
 </html>
