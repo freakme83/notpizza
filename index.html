@@ -14,6 +14,7 @@
     <link rel="stylesheet" href="styles.css" />
     <link rel="preload" href="assets/player-sprite-sheet-v2.png" as="image" type="image/png" />
     <link rel="preload" href="assets/floor-tiles-v1.png" as="image" type="image/png" />
+    <link rel="preload" href="assets/jukebox-sprite-v1.png" as="image" type="image/png" />
   </head>
   <body>
     <div id="wrap">
@@ -33,35 +34,78 @@
       </div>
 
       <div id="pauseOverlay" class="hidden" role="dialog" aria-modal="true" aria-labelledby="pauseTitle">
-        <strong id="pauseTitle">Restaurant Office</strong>
-        <span>The game is paused while you buy upgrades and unlock menu items. Press P or Escape to return.</span>
-        <div id="staffNotice" class="staff-notice hidden" role="alert">
-          <strong id="staffNoticeText">Shift of the waiter is over.</strong>
+        <div class="office-heading">
+          <div>
+            <strong id="pauseTitle">Restaurant Office</strong>
+            <span>Game paused · Press P or Escape to return</span>
+          </div>
+          <div id="shopBudget" class="shop-budget" aria-live="polite"></div>
+        </div>
+        <div class="office-tabs" role="tablist" aria-label="Office sections">
+          <button class="office-tab active" type="button" role="tab" aria-selected="true" data-office-tab="upgrades">Permanent upgrades</button>
+          <button class="office-tab" type="button" role="tab" aria-selected="false" data-office-tab="hires">Hires</button>
+          <button class="office-tab" type="button" role="tab" aria-selected="false" data-office-tab="menu">Menu</button>
+        </div>
+
+        <section class="office-pane active" data-office-pane="upgrades" role="tabpanel">
+          <div class="report-options">
+            <button id="doughUpgrade" class="option-card accent-coral" type="button"><strong>Faster dough · Level 1</strong><span>Upgrade to Level 2</span></button>
+            <button id="ovenUpgrade" class="option-card accent-orange" type="button"><strong>Faster oven · Level 1</strong><span>Upgrade to Level 2</span></button>
+            <button id="ovenCapacityUpgrade" class="option-card accent-red" type="button"><strong>Oven capacity · 1 slot</strong><span>Unlock second slot · $100</span></button>
+            <button id="tableUpgrade" class="option-card accent-blue" type="button"><strong>Third table</strong><span>Requires 3 oven slots · $300</span></button>
+            <button id="sodaUpgrade" class="option-card accent-cyan" type="button"><strong>Soda cabinet</strong><span>Permanent drinks service · $150</span></button>
+            <button id="staffDiscountUpgrade" class="option-card accent-purple" type="button"><strong>Cheaper staff · Level 0</strong><span>Unlock Level 1 · $50</span></button>
+            <button id="jukeboxUpgrade" class="option-card accent-pink" type="button"><strong>Jukebox</strong><span>Customers lose patience 25% slower · $100</span></button>
+            <button id="iceCreamUpgrade" class="option-card accent-mint" type="button"><strong>Ice cream cabinet</strong><span>Unlock Sundae service · $300</span></button>
+            <button id="sundaeSpeedUpgrade" class="option-card accent-mint" type="button"><strong>Faster Sundae</strong><span>Requires ice cream cabinet</span></button>
+            <button id="milkshakeUnlock" class="option-card accent-pink" type="button"><strong>Milkshake</strong><span>Requires ice cream cabinet</span></button>
+            <button id="milkshakeSpeedUpgrade" class="option-card accent-pink" type="button"><strong>Faster Milkshake</strong><span>Requires Milkshake</span></button>
+          </div>
+        </section>
+
+        <section class="office-pane" data-office-pane="hires" role="tabpanel">
+          <p class="report-note">Staff stay for 7 minutes. Current discounts are included below.</p>
+          <div id="hireSummary" class="hire-summary" aria-live="polite"></div>
+          <div id="hireMenu" class="hire-options">
+            <button class="option-card accent-purple" data-type="normal" type="button"><strong>Waiter</strong><span>$20</span><em class="hire-active">None active</em></button>
+            <button class="option-card accent-cyan" data-type="fast" type="button"><strong>Fast waiter</strong><span>$25</span><em class="hire-active">None active</em></button>
+            <button class="option-card accent-red" data-type="chef" type="button"><strong>Chef</strong><span>$80</span><em class="hire-active">None active</em></button>
+            <button class="option-card accent-blue" data-type="drinks" type="button"><strong>Drinks runner</strong><span>$25</span><em class="hire-active">None active</em></button>
+            <button class="option-card accent-orange" data-type="host" type="button"><strong>Host</strong><span>$30</span><em class="hire-active">None active</em></button>
+          </div>
+          <div id="hireToast" class="hire-toast hidden" role="status" aria-live="polite">Waiter hired!</div>
+        </section>
+
+        <section class="office-pane" data-office-pane="menu" role="tabpanel">
+          <p class="report-note">Every extra recipe attracts 5% more customers.</p>
+          <div class="report-options recipe-options">
+            <button class="option-card recipe-choice accent-orange" data-recipe="margherita" type="button">Margherita</button>
+            <button class="option-card recipe-choice accent-red" data-recipe="pepperoni" type="button">Unlock Pepperoni</button>
+            <button class="option-card recipe-choice accent-purple" data-recipe="funghi" type="button">Unlock Funghi</button>
+            <button class="option-card recipe-choice accent-mint" data-recipe="zucchini" type="button">Unlock Zucchini</button>
+          </div>
+        </section>
+
+        <div id="staffNotice" class="staff-notice hidden" role="alertdialog" aria-modal="true" aria-labelledby="staffNoticeText">
+          <button id="staffNoticeClose" class="staff-notice-close" type="button" aria-label="Close">×</button>
+          <p class="staff-notice-kicker">STAFF UPDATE</p>
+          <strong id="staffNoticeText">The waiter's shift is over.</strong>
           <span>Currently assigned staff</span>
           <div id="staffRoster" class="staff-roster"></div>
+          <button id="staffRehireBtn" class="staff-rehire" type="button">Hire again</button>
         </div>
-        <div id="shopBudget" class="shop-budget" aria-live="polite"></div>
-        <h3>Permanent upgrades</h3>
-        <div class="report-options">
-          <button id="doughUpgrade" class="option-card" type="button"><strong>Faster dough · Level 1</strong><span>Upgrade to Level 2</span></button>
-          <button id="ovenUpgrade" class="option-card" type="button"><strong>Faster oven · Level 1</strong><span>Upgrade to Level 2</span></button>
-          <button id="ovenCapacityUpgrade" class="option-card" type="button"><strong>Oven capacity · 1 slot</strong><span>Unlock second slot · $100</span></button>
-          <button id="tableUpgrade" class="option-card" type="button"><strong>Third table</strong><span>Requires 3 oven slots · $300</span></button>
-          <button id="sodaUpgrade" class="option-card" type="button"><strong>Soda cabinet</strong><span>Permanent drinks service · $150</span></button>
-          <button id="staffDiscountUpgrade" class="option-card" type="button"><strong>Cheaper staff · Level 0</strong><span>Unlock Level 1 · $50</span></button>
-          <button id="jukeboxUpgrade" class="option-card" type="button"><strong>Jukebox</strong><span>Customers lose patience 25% slower · $100</span></button>
-          <button id="iceCreamUpgrade" class="option-card" type="button"><strong>Ice cream cabinet</strong><span>Unlock Sundae service · $300</span></button>
-          <button id="sundaeSpeedUpgrade" class="option-card" type="button"><strong>Faster Sundae</strong><span>Requires ice cream cabinet</span></button>
-          <button id="milkshakeUnlock" class="option-card" type="button"><strong>Milkshake</strong><span>Requires ice cream cabinet</span></button>
-          <button id="milkshakeSpeedUpgrade" class="option-card" type="button"><strong>Faster Milkshake</strong><span>Requires Milkshake</span></button>
-        </div>
-        <h3>Expand the menu</h3>
-        <p class="report-note">Every extra recipe attracts 5% more customers.</p>
-        <div class="report-options recipe-options">
-          <button class="option-card recipe-choice" data-recipe="margherita" type="button">Margherita</button>
-          <button class="option-card recipe-choice" data-recipe="pepperoni" type="button">Unlock Pepperoni</button>
-          <button class="option-card recipe-choice" data-recipe="funghi" type="button">Unlock Funghi</button>
-          <button class="option-card recipe-choice" data-recipe="zucchini" type="button">Unlock Zucchini</button>
+      </div>
+
+      <div id="restartConfirm" class="confirm-overlay hidden" role="alertdialog" aria-modal="true" aria-labelledby="restartConfirmTitle">
+        <div class="confirm-card">
+          <button id="restartCancelX" class="confirm-close" type="button" aria-label="Close">×</button>
+          <p class="confirm-kicker">RESTART GAME</p>
+          <strong id="restartConfirmTitle">Are you sure?</strong>
+          <span>All progress from this run will be lost.</span>
+          <div class="confirm-actions">
+            <button id="restartCancelBtn" class="confirm-cancel" type="button">Keep playing</button>
+            <button id="restartConfirmBtn" class="confirm-danger" type="button">Restart game</button>
+          </div>
         </div>
       </div>
 
@@ -89,23 +133,12 @@
         </div>
       </section>
 
-      <div id="hireWrap" class="hidden">
-        <div id="hireMenu" class="hidden" role="menu">
-          <button data-type="normal" role="menuitem">Waiter · $20</button>
-          <button data-type="fast" role="menuitem">Fast waiter · $25</button>
-          <button data-type="chef" role="menuitem">Chef · $80</button>
-          <button data-type="drinks" role="menuitem">Drinks runner · $25</button>
-          <button data-type="host" role="menuitem">Host · $30</button>
-        </div>
-        <button id="hireBtn" aria-haspopup="true">Hire waiter ▾</button>
-      </div>
-
       <div id="start" role="button" tabindex="0">
         <h1>you are not pizza</h1>
         <p>WASD / Arrows to move · E to act · protect your reputation</p>
         <span>click to start</span>
       </div>
     </div>
-    <script src="main.js?v=staff-position-slots"></script>
+    <script src="main.js?v=jukebox-sprite-and-notes"></script>
   </body>
 </html>

@@ -5,9 +5,7 @@
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
   const startScreen = document.getElementById('start');
-  const hireBtn = document.getElementById('hireBtn');
   const hireMenu = document.getElementById('hireMenu');
-  const hireWrap = document.getElementById('hireWrap');
   const gameControls = document.getElementById('gameControls');
   const pauseBtn = document.getElementById('pauseBtn');
   const officeButtonTitle = document.getElementById('officeButtonTitle');
@@ -19,6 +17,16 @@
   const staffNotice = document.getElementById('staffNotice');
   const staffNoticeText = document.getElementById('staffNoticeText');
   const staffRoster = document.getElementById('staffRoster');
+  const staffNoticeClose = document.getElementById('staffNoticeClose');
+  const staffRehireBtn = document.getElementById('staffRehireBtn');
+  const hireSummary = document.getElementById('hireSummary');
+  const hireToast = document.getElementById('hireToast');
+  const officeTabs = [...document.querySelectorAll('[data-office-tab]')];
+  const officePanes = [...document.querySelectorAll('[data-office-pane]')];
+  const restartConfirm = document.getElementById('restartConfirm');
+  const restartCancelX = document.getElementById('restartCancelX');
+  const restartCancelBtn = document.getElementById('restartCancelBtn');
+  const restartConfirmBtn = document.getElementById('restartConfirmBtn');
   const ingredientDropdown = document.getElementById('ingredientDropdown');
   const ingredientToggle = document.getElementById('ingredientToggle');
   const ingredientOptions = document.getElementById('ingredientOptions');
@@ -57,6 +65,11 @@
   floorTiles.addEventListener('load', () => { floorTilesReady = true; });
   floorTiles.addEventListener('error', () => { floorTilesReady = false; });
   floorTiles.src = 'assets/floor-tiles-v1.png';
+  const jukeboxSprite = new Image();
+  let jukeboxSpriteReady = false;
+  jukeboxSprite.addEventListener('load', () => { jukeboxSpriteReady = true; });
+  jukeboxSprite.addEventListener('error', () => { jukeboxSpriteReady = false; });
+  jukeboxSprite.src = 'assets/jukebox-sprite-v1.png';
 
   /* ---------- palette (warm pizzeria) ---------- */
   const C = {
@@ -268,6 +281,16 @@
         if (started) { syncHireUI(); syncOfficeCue(); if (paused) refreshReportOptions(); }
       }
     }
+    if (!restartConfirm.classList.contains('hidden')) {
+      e.preventDefault();
+      if (e.code === 'Escape') closeRestartConfirm();
+      return;
+    }
+    if (!staffNotice.classList.contains('hidden')) {
+      e.preventDefault();
+      if (e.code === 'Escape') closeStaffNotice();
+      return;
+    }
     if ((e.code === 'KeyP' || e.code === 'Escape') && started) {
       e.preventDefault();
       togglePause();
@@ -363,8 +386,8 @@
       SND.bin();
     }
   }
-  function takeFullBinBag(handOwner, handIndex, ownerId = null) {
-    if (!binIsFull() || handIndex < 0 || (BIN.claimedBy !== null && BIN.claimedBy !== ownerId)) return false;
+  function takeBinBag(handOwner, handIndex, ownerId = null, requireFull = false) {
+    if (BIN.count <= 0 || (requireFull && !binIsFull()) || handIndex < 0 || (BIN.claimedBy !== null && BIN.claimedBy !== ownerId)) return false;
     handOwner[handIndex] = { t: 'binbag' };
     BIN.count = 0;
     BIN.claimedBy = null;
@@ -493,9 +516,7 @@
     if (!carrier || carrier.id !== c.drinkId) return false;
     if (ownerId === null) releaseWaiterAssignment(c.drinkClaimedBy, c, 'drink');
     if (c.state === 'waiting') {
-      const missingPatience = Math.max(0, c.maxPatience - c.patience);
-      const patienceBoost = Math.round(clamp(c.maxPatience * 0.1 + missingPatience * 0.25, 5, 14));
-      c.patience = Math.min(c.maxPatience, c.patience + patienceBoost);
+      boostCustomerPatience(c);
     }
     recordFirstService(c);
     c.drinkDelivered = true;
@@ -580,11 +601,11 @@
       const dessertCustomer = nearestDessertCustomer(p.x, p.y, DELIVER_RADIUS, p.dessert.id, null, true);
       if (dessertCustomer) return { kind: 'deliver-dessert', ok: true, text: 'E: Deliver ' + DESSERTS[p.dessert.id].name, target: dessertCustomer };
     }
-    if (inBinRange(p) && binIsFull()) {
+    if (inBinRange(p) && BIN.count > 0) {
       const hand = p.trash.findIndex((item) => !item);
       return hand >= 0
-        ? { kind: 'take-bin-bag', ok: true, text: 'E: Take full trash bag to door', hand }
-        : { kind: 'take-bin-bag', ok: false, text: 'Trash full · free a hand' };
+        ? { kind: 'take-bin-bag', ok: true, text: 'E: Take trash bag (' + BIN.count + '/' + BIN.capacity + ') to door', hand }
+        : { kind: 'take-bin-bag', ok: false, text: 'Free a hand to take the trash bag' };
     }
     if (inBinRange(p) && (p.drink || p.dessert || p.pizzas.some(Boolean))) {
       const item = p.drink ? 'drink' : p.dessert ? 'dessert' : 'pizza';
@@ -679,9 +700,16 @@
   function serveCustomer(c) {
     recordFirstService(c);
     c.pizzaServiceAt = c.serviceElapsed;
+    boostCustomerPatience(c);
     c.pizzaDelivered = true;
     c.chefOrderClaimedBy = null;
     advanceCompletedOrder(c);
+  }
+  function boostCustomerPatience(c) {
+    if (!c || c.state !== 'waiting') return;
+    const missingPatience = Math.max(0, c.maxPatience - c.patience);
+    const patienceBoost = Math.round(clamp(c.maxPatience * 0.1 + missingPatience * 0.25, 5, 14));
+    c.patience = Math.min(c.maxPatience, c.patience + patienceBoost);
   }
   function deliver(c, handIndex) {
     const p = state.player;
@@ -728,7 +756,7 @@
         if (waiter && waiter.state === 'tofullbin') waiter.state = 'seek';
         BIN.claimedBy = null;
       }
-      takeFullBinBag(p.trash, c.hand);
+      takeBinBag(p.trash, c.hand);
     }
     else if (c.kind === 'discard-held') {
       if (c.item === 'drink') { p.drink = null; state.cash -= 1; shift.stats.wasteCosts += 1; }
@@ -846,7 +874,6 @@
 
   canvas.addEventListener('click', () => {
     if (!startScreen.classList.contains('hidden')) return;
-    if (hireMenu && !hireMenu.classList.contains('hidden')) { hireMenu.classList.add('hidden'); return; }
     tryInteract();
   });
 
@@ -987,9 +1014,74 @@
     const step = Math.min(d, speed * dt);
     e.x += (dx / d) * step; e.y += (dy / d) * step;
   }
+  function segmentClearOfTables(ax, ay, bx, by, entity) {
+    const vx = bx - ax, vy = by - ay;
+    const lengthSq = vx * vx + vy * vy;
+    for (const table of activeTables()) {
+      const radius = table.r + entity.r + 1;
+      const projection = lengthSq > 0 ? clamp(((table.x - ax) * vx + (table.y - ay) * vy) / lengthSq, 0, 1) : 0;
+      const closestX = ax + vx * projection, closestY = ay + vy * projection;
+      if (dist(closestX, closestY, table.x, table.y) < radius) return false;
+    }
+    return true;
+  }
+  function tableRoute(entity, tx, ty) {
+    const start = { x: entity.x, y: entity.y };
+    const target = { x: tx, y: ty };
+    if (segmentClearOfTables(start.x, start.y, tx, ty, entity)) return [target];
+
+    const nodes = [start, target];
+    for (const table of activeTables()) {
+      const radius = table.r + entity.r + 13;
+      for (let i = 0; i < 12; i++) {
+        const angle = (Math.PI * 2 * i) / 12;
+        const point = {
+          x: clamp(table.x + Math.cos(angle) * radius, 28, W - 28),
+          y: clamp(table.y + Math.sin(angle) * radius, 180, H - 18),
+        };
+        const blocked = activeTables().some((other) => dist(point.x, point.y, other.x, other.y) < other.r + entity.r + 1);
+        if (!blocked) nodes.push(point);
+      }
+    }
+
+    const distanceTo = Array(nodes.length).fill(Infinity);
+    const previous = Array(nodes.length).fill(-1);
+    const visited = Array(nodes.length).fill(false);
+    distanceTo[0] = 0;
+    for (let step = 0; step < nodes.length; step++) {
+      let current = -1;
+      for (let i = 0; i < nodes.length; i++) {
+        if (!visited[i] && (current < 0 || distanceTo[i] < distanceTo[current])) current = i;
+      }
+      if (current < 0 || distanceTo[current] === Infinity || current === 1) break;
+      visited[current] = true;
+      for (let next = 1; next < nodes.length; next++) {
+        if (next === current || visited[next]) continue;
+        if (!segmentClearOfTables(nodes[current].x, nodes[current].y, nodes[next].x, nodes[next].y, entity)) continue;
+        const candidate = distanceTo[current] + dist(nodes[current].x, nodes[current].y, nodes[next].x, nodes[next].y);
+        if (candidate < distanceTo[next]) {
+          distanceTo[next] = candidate;
+          previous[next] = current;
+        }
+      }
+    }
+    if (distanceTo[1] === Infinity) return [target];
+    const route = [];
+    for (let at = 1; at > 0; at = previous[at]) route.unshift(nodes[at]);
+    return route;
+  }
   function moveEntity(e, tx, ty, dt) {
-    const dx = tx - e.x, dy = ty - e.y, d = Math.hypot(dx, dy);
-    if (d < 1) return true;
+    const targetChanged = !e.nav || dist(e.nav.tx, e.nav.ty, tx, ty) > 3;
+    if (targetChanged) e.nav = { tx, ty, points: tableRoute(e, tx, ty) };
+    while (e.nav.points.length > 1 && dist(e.x, e.y, e.nav.points[0].x, e.nav.points[0].y) < 3) e.nav.points.shift();
+    const waypoint = e.nav.points[0] || { x: tx, y: ty };
+    const finalPoint = e.nav.points.length <= 1;
+    const dx = waypoint.x - e.x, dy = waypoint.y - e.y, d = Math.hypot(dx, dy);
+    if (finalPoint && dist(e.x, e.y, tx, ty) < 1) { e.nav = null; return true; }
+    if (d < 0.5) {
+      e.nav = { tx, ty, points: tableRoute(e, tx, ty) };
+      return false;
+    }
     const step = Math.min(d, e.speed * dt);
     let nx = e.x + (dx / d) * step, ny = e.y + (dy / d) * step;
     nx = clamp(nx, 28, W - 28); ny = clamp(ny, 180, H - 18);
@@ -1120,7 +1212,7 @@
       if (w.timer <= 0) {
         w.timer = 0;
         w.state = 'leave';
-        showStaffShiftNotice(waiterRole(w));
+        showStaffShiftNotice(w.drinksOnly ? 'drinks' : w.fast ? 'fast' : 'normal');
         return;
       }
     }
@@ -1227,7 +1319,7 @@
       }
       if (moveEntity(w, BIN.x, BIN.y, dt) || dist(w.x, w.y, BIN.x, BIN.y) < 46) {
         const hand = hasFreeHand(w);
-        if (hand >= 0 && takeFullBinBag(w.hands, hand, w.id)) w.state = 'tobagdoor';
+        if (hand >= 0 && takeBinBag(w.hands, hand, w.id, true)) w.state = 'tobagdoor';
         else w.state = 'seek';
       }
       return;
@@ -1653,11 +1745,29 @@
   function drawJukebox() {
     if (!progress.jukebox) return;
     const x = 904, y = 500;
-    ctx.fillStyle = '#5a2f32'; roundRect(x - 18, y - 28, 36, 56, 10); ctx.fill();
-    ctx.fillStyle = '#e8b04a'; ctx.beginPath(); ctx.arc(x, y - 10, 12, Math.PI, 0); ctx.fill();
-    ctx.fillStyle = '#303b46'; roundRect(x - 11, y - 10, 22, 22, 4); ctx.fill();
-    ctx.fillStyle = '#f2d15d'; ctx.beginPath(); ctx.arc(x, y + 1, 7, 0, 7); ctx.fill();
-    ctx.fillStyle = '#fff7ec'; ctx.font = "800 8px 'Inter', sans-serif"; ctx.textAlign = 'center'; ctx.fillText('JUKEBOX', x, y + 22);
+    ctx.fillStyle = 'rgba(35,24,20,0.18)';
+    ctx.beginPath(); ctx.ellipse(x, y + 35, 24, 6, 0, 0, Math.PI * 2); ctx.fill();
+    if (jukeboxSpriteReady) {
+      ctx.drawImage(jukeboxSprite, x - 25, y - 40, 50, 75);
+    } else {
+      ctx.fillStyle = '#5a2f32'; roundRect(x - 18, y - 28, 36, 56, 10); ctx.fill();
+      ctx.fillStyle = '#e8b04a'; ctx.beginPath(); ctx.arc(x, y - 10, 12, Math.PI, 0); ctx.fill();
+      ctx.fillStyle = '#303b46'; roundRect(x - 11, y - 10, 22, 22, 4); ctx.fill();
+      ctx.fillStyle = '#f2d15d'; ctx.beginPath(); ctx.arc(x, y + 1, 7, 0, 7); ctx.fill();
+    }
+    ctx.save();
+    ctx.font = "900 11px 'Inter', sans-serif";
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for (let i = 0; i < 4; i++) {
+      const phase = (state.time * 0.42 + i * 0.24) % 1;
+      const noteX = x - 14 + i * 9 + Math.sin(state.time * 2.2 + i * 1.8) * 4;
+      const noteY = y - 35 - phase * 34;
+      ctx.globalAlpha = Math.sin(phase * Math.PI) * 0.82;
+      ctx.fillStyle = i % 2 ? '#70d95b' : '#4fbf69';
+      ctx.fillText(i % 2 ? '\u266a' : '\u266b', noteX, noteY);
+    }
+    ctx.restore();
   }
   function drawDrinkIcon(id, x, y) {
     const drink = DRINKS[id]; if (!drink) return;
@@ -1970,34 +2080,71 @@
   }
 
   /* ---------- hire menu UI ---------- */
+  let hireToastTimer = null;
+  function activeStaffFor(type) {
+    if (type === 'chef') return state.chefs.filter((chef) => !chef.remove && chef.state !== 'leave').map((chef) => chef.timer);
+    if (type === 'host') return hostActive ? [hostTimer] : [];
+    return state.waiters
+      .filter((waiter) => !waiter.remove && waiter.state !== 'leave'
+        && (type === 'drinks' ? waiter.drinksOnly : type === 'fast' ? waiter.fast && !waiter.drinksOnly : !waiter.fast && !waiter.drinksOnly))
+      .map((waiter) => waiter.timer);
+  }
+  function showHireConfirmation(type, button) {
+    const label = staffLabel(type);
+    button.dataset.cooldown = 'true';
+    button.classList.add('just-hired');
+    button.querySelector('strong').textContent = '\u2713 ' + label.replace(/\b\w/g, (letter) => letter.toUpperCase()) + ' hired';
+    hireToast.textContent = label.replace(/\b\w/g, (letter) => letter.toUpperCase()) + ' hired!';
+    hireToast.classList.remove('hidden');
+    if (hireToastTimer) clearTimeout(hireToastTimer);
+    hireToastTimer = setTimeout(() => hireToast.classList.add('hidden'), 2000);
+    setTimeout(() => {
+      delete button.dataset.cooldown;
+      button.classList.remove('just-hired');
+      syncHireUI();
+    }, 1000);
+  }
   function syncHireUI() {
-    if (!hireBtn || !hireMenu) return;
-    const active = state.waiters.filter((w) => w.state !== 'leave').length
-                 + state.chefs.filter((c) => c.state !== 'leave').length
-                 + (hostActive ? 1 : 0);
-    hireBtn.textContent = 'Hire staff \u25BE' + (active > 0 ? '  (\u00D7' + active + ')' : '');
+    if (!hireMenu) return;
+    let totalActive = 0;
     hireMenu.querySelectorAll('button').forEach((b) => {
       const t = b.dataset.type;
       const baseCost = t === 'chef' ? CHEF_COST : t === 'host' ? HOST_COST : t === 'drinks' ? DRINKS_WAITER_COST : t === 'fast' ? FAST_WAITER_COST : WAITER_COST;
       const cost = discountedStaffCost(baseCost);
-      b.textContent = (t === 'chef' ? 'Chef' : t === 'host' ? 'Host' : t === 'drinks' ? 'Drinks runner' : t === 'fast' ? 'Fast waiter' : 'Waiter') + ' · ' + money(cost);
-      b.classList.toggle('off', state.cash < cost || (t === 'drinks' && !progress.sodaCabinet && !progress.iceCreamCabinet) || (t === 'host' && hostActive));
+      const activeTimers = activeStaffFor(t);
+      totalActive += activeTimers.length;
+      if (!b.dataset.cooldown) b.querySelector('strong').textContent = (activeTimers.length ? 'Hire another ' : '') + (t === 'chef' ? 'Chef' : t === 'host' ? 'Host' : t === 'drinks' ? 'Drinks runner' : t === 'fast' ? 'Fast waiter' : 'Waiter');
+      b.querySelector('span').textContent = money(cost) + ' · 7 minute shift';
+      b.querySelector('.hire-active').textContent = activeTimers.length
+        ? 'Active: ' + activeTimers.length + ' · ' + activeTimers.map(staffTime).join(' · ') + ' remaining'
+        : 'None active';
+      const unavailable = b.dataset.cooldown === 'true' || state.cash < cost || (t === 'drinks' && !progress.sodaCabinet && !progress.iceCreamCabinet) || (t === 'host' && hostActive);
+      b.disabled = unavailable;
+      b.classList.toggle('off', unavailable);
     });
+    hireSummary.innerHTML = '<strong>' + totalActive + ' staff active</strong><span>Total wages paid: ' + money(shift.stats.staffCosts) + '</span>';
   }
-  if (hireBtn) hireBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    if (!startScreen.classList.contains('hidden')) return;
-    hireMenu.classList.toggle('hidden');
-  });
   if (hireMenu) hireMenu.querySelectorAll('button').forEach((b) => {
     b.addEventListener('click', (e) => {
       e.stopPropagation();
+      const cashBefore = state.cash;
       if (b.dataset.type === 'chef') hireChef();
       else if (b.dataset.type === 'host') hireHost();
       else hireWaiter(b.dataset.type);
-      hireMenu.classList.add('hidden');
+      refreshReportOptions();
+      if (state.cash < cashBefore) showHireConfirmation(b.dataset.type, b);
     });
   });
+
+  officeTabs.forEach((tab) => tab.addEventListener('click', () => {
+    const target = tab.dataset.officeTab;
+    officeTabs.forEach((button) => {
+      const active = button === tab;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-selected', String(active));
+    });
+    officePanes.forEach((pane) => pane.classList.toggle('active', pane.dataset.officePane === target));
+  }));
 
 
   /* ---------- endless chaos, reputation and upgrades ---------- */
@@ -2048,7 +2195,6 @@
   function showGameOver() {
     if (shift.showingReport) return;
     shift.showingReport = true; Input.keys = {}; Input.pressed = {};
-    hireMenu.classList.add('hidden'); hireWrap.classList.add('paused');
     pauseOverlay.classList.add('hidden');
     updateOfficeButton(false, 0);
     paused = false;
@@ -2128,11 +2274,8 @@
       button.classList.toggle('purchased', unlocked);
       button.textContent = unlocked ? RECIPES[id].name + ' · Unlocked' : 'Unlock ' + RECIPES[id].name + ' · ' + money(cost);
     });
-    const spent = Math.max(0, shift.shoppingStartCash - Math.round(state.cash));
-    shopBudget.innerHTML =
-      '<div><span>Cash on pause</span><strong>' + money(shift.shoppingStartCash) + '</strong></div>' +
-      '<div><span>Spent this visit</span><strong>-' + money(spent) + '</strong></div>' +
-      '<div><span>Cash remaining</span><strong>' + money(state.cash) + '</strong></div>';
+    shopBudget.innerHTML = '<span>Cash</span><strong>' + money(state.cash) + '</strong>';
+    syncHireUI();
     syncOfficeCue();
   }
 
@@ -2278,12 +2421,43 @@
     if (hostActive) rows.push('<div><span>host</span><strong>' + staffTime(hostTimer) + '</strong></div>');
     staffRoster.innerHTML = rows.length ? rows.join('') : '<div class="empty-roster">No other staff on shift</div>';
   }
-  function showStaffShiftNotice(role) {
+  let expiredStaffType = null;
+  function staffLabel(type) {
+    return type === 'chef' ? 'chef' : type === 'host' ? 'host' : type === 'drinks' ? 'drinks runner' : type === 'fast' ? 'fast waiter' : 'waiter';
+  }
+  function staffCostFor(type) {
+    const base = type === 'chef' ? CHEF_COST : type === 'host' ? HOST_COST : type === 'drinks' ? DRINKS_WAITER_COST : type === 'fast' ? FAST_WAITER_COST : WAITER_COST;
+    return discountedStaffCost(base);
+  }
+  function showStaffShiftNotice(type) {
     setPaused(true);
-    staffNoticeText.textContent = 'Shift of the ' + role + ' is over.';
+    expiredStaffType = type;
+    const role = staffLabel(type);
+    const cost = staffCostFor(type);
+    staffNoticeText.textContent = 'The ' + role + "'s shift is over.";
+    staffRehireBtn.textContent = 'Hire again · ' + money(cost);
+    staffRehireBtn.disabled = state.cash < cost || (type === 'host' && hostActive) || (type === 'drinks' && !progress.sodaCabinet && !progress.iceCreamCabinet);
     refreshStaffRoster();
     staffNotice.classList.remove('hidden');
   }
+
+  function closeStaffNotice() {
+    staffNotice.classList.add('hidden');
+    expiredStaffType = null;
+  }
+  staffNoticeClose.addEventListener('click', closeStaffNotice);
+  staffRehireBtn.addEventListener('click', () => {
+    if (!expiredStaffType || staffRehireBtn.disabled) return;
+    const type = expiredStaffType;
+    const cashBefore = state.cash;
+    if (type === 'chef') hireChef();
+    else if (type === 'host') hireHost();
+    else hireWaiter(type);
+    closeStaffNotice();
+    refreshReportOptions();
+    const button = hireMenu.querySelector('[data-type="' + type + '"]');
+    if (button && state.cash < cashBefore) showHireConfirmation(type, button);
+  });
 
   function setPaused(nextPaused) {
     if (!started || shift.showingReport || paused === nextPaused) return;
@@ -2302,7 +2476,6 @@
     ingredientOptions.classList.add('hidden');
     drinkOptions.classList.add('hidden');
     dessertOptions.classList.add('hidden');
-    hireWrap.classList.toggle('paused', paused);
     last = performance.now();
     if (!paused && audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
   }
@@ -2312,7 +2485,21 @@
   }
 
   pauseBtn.addEventListener('click', togglePause);
-  restartBtn.addEventListener('click', () => window.location.reload());
+  let restartWasPaused = false;
+  function openRestartConfirm() {
+    restartWasPaused = paused;
+    if (!paused) setPaused(true);
+    restartConfirm.classList.remove('hidden');
+    restartConfirmBtn.focus();
+  }
+  function closeRestartConfirm() {
+    restartConfirm.classList.add('hidden');
+    if (!restartWasPaused) setPaused(false);
+  }
+  restartBtn.addEventListener('click', openRestartConfirm);
+  restartCancelX.addEventListener('click', closeRestartConfirm);
+  restartCancelBtn.addEventListener('click', closeRestartConfirm);
+  restartConfirmBtn.addEventListener('click', () => window.location.reload());
 
   function frame(t) {
     if (!started) return;
@@ -2390,7 +2577,6 @@
       audioCtx = null;
     }
     startScreen.classList.add('hidden');
-    if (hireWrap) hireWrap.classList.remove('hidden');
     if (gameControls) gameControls.classList.remove('hidden');
     if (ingredientDropdown) ingredientDropdown.classList.remove('hidden');
     if (drinkDropdown) drinkDropdown.classList.remove('hidden');
