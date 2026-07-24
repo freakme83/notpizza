@@ -64,13 +64,15 @@
 
         <section class="office-pane" data-office-pane="hires" role="tabpanel">
           <p class="report-note">Staff stay for 7 minutes. Current discounts are included below.</p>
+          <div id="hireSummary" class="hire-summary" aria-live="polite"></div>
           <div id="hireMenu" class="hire-options">
-            <button class="option-card accent-purple" data-type="normal" type="button"><strong>Waiter</strong><span>$20</span></button>
-            <button class="option-card accent-cyan" data-type="fast" type="button"><strong>Fast waiter</strong><span>$25</span></button>
-            <button class="option-card accent-red" data-type="chef" type="button"><strong>Chef</strong><span>$80</span></button>
-            <button class="option-card accent-blue" data-type="drinks" type="button"><strong>Drinks runner</strong><span>$25</span></button>
-            <button class="option-card accent-orange" data-type="host" type="button"><strong>Host</strong><span>$30</span></button>
+            <button class="option-card accent-purple" data-type="normal" type="button"><strong>Waiter</strong><span>$20</span><em class="hire-active">None active</em></button>
+            <button class="option-card accent-cyan" data-type="fast" type="button"><strong>Fast waiter</strong><span>$25</span><em class="hire-active">None active</em></button>
+            <button class="option-card accent-red" data-type="chef" type="button"><strong>Chef</strong><span>$80</span><em class="hire-active">None active</em></button>
+            <button class="option-card accent-blue" data-type="drinks" type="button"><strong>Drinks runner</strong><span>$25</span><em class="hire-active">None active</em></button>
+            <button class="option-card accent-orange" data-type="host" type="button"><strong>Host</strong><span>$30</span><em class="hire-active">None active</em></button>
           </div>
+          <div id="hireToast" class="hire-toast hidden" role="status" aria-live="polite">Waiter hired!</div>
         </section>
 
         <section class="office-pane" data-office-pane="menu" role="tabpanel">
@@ -90,6 +92,19 @@
           <span>Currently assigned staff</span>
           <div id="staffRoster" class="staff-roster"></div>
           <button id="staffRehireBtn" class="staff-rehire" type="button">Hire again</button>
+        </div>
+      </div>
+
+      <div id="restartConfirm" class="confirm-overlay hidden" role="alertdialog" aria-modal="true" aria-labelledby="restartConfirmTitle">
+        <div class="confirm-card">
+          <button id="restartCancelX" class="confirm-close" type="button" aria-label="Close">×</button>
+          <p class="confirm-kicker">RESTART GAME</p>
+          <strong id="restartConfirmTitle">Are you sure?</strong>
+          <span>All progress from this run will be lost.</span>
+          <div class="confirm-actions">
+            <button id="restartCancelBtn" class="confirm-cancel" type="button">Keep playing</button>
+            <button id="restartConfirmBtn" class="confirm-danger" type="button">Restart game</button>
+          </div>
         </div>
       </div>
 
@@ -123,6 +138,6 @@
         <span>click to start</span>
       </div>
     </div>
-    <script src="main.js?v=office-tabs-and-rehire"></script>
+    <script src="main.js?v=hire-feedback-and-restart-confirm"></script>
   </body>
 </html>
