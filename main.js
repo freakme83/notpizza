@@ -76,6 +76,11 @@
   jukeboxSprite.addEventListener('load', () => { jukeboxSpriteReady = true; });
   jukeboxSprite.addEventListener('error', () => { jukeboxSpriteReady = false; });
   jukeboxSprite.src = 'assets/jukebox-sprite-v1.png';
+  const ovenSprite = new Image();
+  let ovenSpriteReady = false;
+  ovenSprite.addEventListener('load', () => { ovenSpriteReady = true; });
+  ovenSprite.addEventListener('error', () => { ovenSpriteReady = false; });
+  ovenSprite.src = 'assets/oven-sprite-sheet-v1.png';
 
   /* ---------- palette (warm pizzeria) ---------- */
   const C = {
@@ -1850,6 +1855,10 @@
   }
   function drawStation(s) {
     const x = s.cx - s.w / 2, y = 70;
+    if (s.id === 'oven' && ovenSpriteReady) {
+      drawSpriteOven(s);
+      return;
+    }
     ctx.fillStyle = C.counter; roundRect(x, y, s.w, s.h, 10); ctx.fill();
     ctx.fillStyle = C.counterTop; roundRect(x, y, s.w, 22, 10); ctx.fill(); ctx.fillRect(x, y + 8, s.w, 14);
     ctx.fillStyle = s.id === 'oven' ? C.oven : '#f0e3c0';
@@ -1870,6 +1879,55 @@
         ctx.globalAlpha = 1;
       });
     } else drawOvenSlots(s, y);
+  }
+  function ovenSpriteLayout(count = progress.ovenSlots) {
+    const layouts = {
+      1: { sx: 210, sy: 55, sw: 600, sh: 450, dw: 150, dh: 113, y: 56, mouths: [0.502] },
+      2: { sx: 120, sy: 545, sw: 780, sh: 470, dw: 230, dh: 139, y: 42, mouths: [0.276, 0.731] },
+      3: { sx: 50, sy: 1045, sw: 920, sh: 460, dw: 290, dh: 145, y: 38, mouths: [0.217, 0.505, 0.793] },
+    };
+    const layout = layouts[count] || layouts[1];
+    return Object.assign({ x: oven().cx - layout.dw / 2 }, layout);
+  }
+  function drawReadySmoke(x, chimneyY) {
+    ctx.save();
+    for (let i = 0; i < 4; i++) {
+      const phase = (state.time * 0.36 + i * 0.23) % 1;
+      const px = x + Math.sin(state.time * 1.7 + i * 1.4) * (3 + phase * 5);
+      const py = chimneyY - phase * 34;
+      ctx.globalAlpha = Math.sin(phase * Math.PI) * 0.32;
+      ctx.fillStyle = '#efe8dd';
+      ctx.beginPath();
+      ctx.arc(px, py, 3 + phase * 5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+  function drawSpriteOven(ov) {
+    const layout = ovenSpriteLayout();
+    ctx.drawImage(ovenSprite, layout.sx, layout.sy, layout.sw, layout.sh, layout.x, layout.y, layout.dw, layout.dh);
+    const slots = activeOvenSlots(ov);
+    const mouthY = layout.y + layout.dh * 0.64;
+    slots.forEach((slot, index) => {
+      const cx = layout.x + layout.dw * layout.mouths[index];
+      if (slot.pizza) {
+        drawPizza(cx, mouthY, pizzaStage(slot.pizza), progress.ovenSlots === 1 ? 0.78 : 0.68);
+        if (slot.baking) {
+          const width = progress.ovenSlots === 1 ? 48 : 40;
+          const pct = clamp(slot.timer / bakeDuration(), 0, 1);
+          ctx.fillStyle = 'rgba(0,0,0,0.55)'; roundRect(cx - width / 2, mouthY + 16, width, 4, 2); ctx.fill();
+          ctx.fillStyle = C.good; roundRect(cx - width / 2, mouthY + 16, width * pct, 4, 2); ctx.fill();
+        }
+        if (slot.done) {
+          ctx.strokeStyle = '#ffd98a'; ctx.lineWidth = 2;
+          ctx.globalAlpha = 0.55 + Math.sin(state.time * 6) * 0.25;
+          ctx.beginPath(); ctx.arc(cx, mouthY, 14, 0, Math.PI * 2); ctx.stroke();
+          ctx.globalAlpha = 1;
+        }
+      }
+      drawEquipmentStatus(equipment.ovens[index], cx, layout.y + layout.dh * 0.34);
+    });
+    if (slots.some((slot) => slot.done)) drawReadySmoke(ov.cx, layout.y + 8);
   }
   // Vector fallback placeholder: each unlocked mouth can later map to an oven-slot sprite/frame.
   function drawOvenSlots(ov, y) {
