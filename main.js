@@ -19,8 +19,14 @@
   const staffRoster = document.getElementById('staffRoster');
   const staffNoticeClose = document.getElementById('staffNoticeClose');
   const staffRehireBtn = document.getElementById('staffRehireBtn');
+  const hireSummary = document.getElementById('hireSummary');
+  const hireToast = document.getElementById('hireToast');
   const officeTabs = [...document.querySelectorAll('[data-office-tab]')];
   const officePanes = [...document.querySelectorAll('[data-office-pane]')];
+  const restartConfirm = document.getElementById('restartConfirm');
+  const restartCancelX = document.getElementById('restartCancelX');
+  const restartCancelBtn = document.getElementById('restartCancelBtn');
+  const restartConfirmBtn = document.getElementById('restartConfirmBtn');
   const ingredientDropdown = document.getElementById('ingredientDropdown');
   const ingredientToggle = document.getElementById('ingredientToggle');
   const ingredientOptions = document.getElementById('ingredientOptions');
@@ -269,6 +275,16 @@
         SND.cash();
         if (started) { syncHireUI(); syncOfficeCue(); if (paused) refreshReportOptions(); }
       }
+    }
+    if (!restartConfirm.classList.contains('hidden')) {
+      e.preventDefault();
+      if (e.code === 'Escape') closeRestartConfirm();
+      return;
+    }
+    if (!staffNotice.classList.contains('hidden')) {
+      e.preventDefault();
+      if (e.code === 'Escape') closeStaffNotice();
+      return;
     }
     if ((e.code === 'KeyP' || e.code === 'Escape') && started) {
       e.preventDefault();
@@ -1971,26 +1987,59 @@
   }
 
   /* ---------- hire menu UI ---------- */
+  let hireToastTimer = null;
+  function activeStaffFor(type) {
+    if (type === 'chef') return state.chefs.filter((chef) => !chef.remove && chef.state !== 'leave').map((chef) => chef.timer);
+    if (type === 'host') return hostActive ? [hostTimer] : [];
+    return state.waiters
+      .filter((waiter) => !waiter.remove && waiter.state !== 'leave'
+        && (type === 'drinks' ? waiter.drinksOnly : type === 'fast' ? waiter.fast && !waiter.drinksOnly : !waiter.fast && !waiter.drinksOnly))
+      .map((waiter) => waiter.timer);
+  }
+  function showHireConfirmation(type, button) {
+    const label = staffLabel(type);
+    button.dataset.cooldown = 'true';
+    button.classList.add('just-hired');
+    button.querySelector('strong').textContent = '\u2713 ' + label.replace(/\b\w/g, (letter) => letter.toUpperCase()) + ' hired';
+    hireToast.textContent = label.replace(/\b\w/g, (letter) => letter.toUpperCase()) + ' hired!';
+    hireToast.classList.remove('hidden');
+    if (hireToastTimer) clearTimeout(hireToastTimer);
+    hireToastTimer = setTimeout(() => hireToast.classList.add('hidden'), 2000);
+    setTimeout(() => {
+      delete button.dataset.cooldown;
+      button.classList.remove('just-hired');
+      syncHireUI();
+    }, 1000);
+  }
   function syncHireUI() {
     if (!hireMenu) return;
+    let totalActive = 0;
     hireMenu.querySelectorAll('button').forEach((b) => {
       const t = b.dataset.type;
       const baseCost = t === 'chef' ? CHEF_COST : t === 'host' ? HOST_COST : t === 'drinks' ? DRINKS_WAITER_COST : t === 'fast' ? FAST_WAITER_COST : WAITER_COST;
       const cost = discountedStaffCost(baseCost);
-      b.querySelector('strong').textContent = t === 'chef' ? 'Chef' : t === 'host' ? 'Host' : t === 'drinks' ? 'Drinks runner' : t === 'fast' ? 'Fast waiter' : 'Waiter';
+      const activeTimers = activeStaffFor(t);
+      totalActive += activeTimers.length;
+      if (!b.dataset.cooldown) b.querySelector('strong').textContent = (activeTimers.length ? 'Hire another ' : '') + (t === 'chef' ? 'Chef' : t === 'host' ? 'Host' : t === 'drinks' ? 'Drinks runner' : t === 'fast' ? 'Fast waiter' : 'Waiter');
       b.querySelector('span').textContent = money(cost) + ' · 7 minute shift';
-      const unavailable = state.cash < cost || (t === 'drinks' && !progress.sodaCabinet && !progress.iceCreamCabinet) || (t === 'host' && hostActive);
+      b.querySelector('.hire-active').textContent = activeTimers.length
+        ? 'Active: ' + activeTimers.length + ' · ' + activeTimers.map(staffTime).join(' · ') + ' remaining'
+        : 'None active';
+      const unavailable = b.dataset.cooldown === 'true' || state.cash < cost || (t === 'drinks' && !progress.sodaCabinet && !progress.iceCreamCabinet) || (t === 'host' && hostActive);
       b.disabled = unavailable;
       b.classList.toggle('off', unavailable);
     });
+    hireSummary.innerHTML = '<strong>' + totalActive + ' staff active</strong><span>Total wages paid: ' + money(shift.stats.staffCosts) + '</span>';
   }
   if (hireMenu) hireMenu.querySelectorAll('button').forEach((b) => {
     b.addEventListener('click', (e) => {
       e.stopPropagation();
+      const cashBefore = state.cash;
       if (b.dataset.type === 'chef') hireChef();
       else if (b.dataset.type === 'host') hireHost();
       else hireWaiter(b.dataset.type);
       refreshReportOptions();
+      if (state.cash < cashBefore) showHireConfirmation(b.dataset.type, b);
     });
   });
 
@@ -2307,11 +2356,14 @@
   staffRehireBtn.addEventListener('click', () => {
     if (!expiredStaffType || staffRehireBtn.disabled) return;
     const type = expiredStaffType;
+    const cashBefore = state.cash;
     if (type === 'chef') hireChef();
     else if (type === 'host') hireHost();
     else hireWaiter(type);
     closeStaffNotice();
     refreshReportOptions();
+    const button = hireMenu.querySelector('[data-type="' + type + '"]');
+    if (button && state.cash < cashBefore) showHireConfirmation(type, button);
   });
 
   function setPaused(nextPaused) {
@@ -2340,7 +2392,21 @@
   }
 
   pauseBtn.addEventListener('click', togglePause);
-  restartBtn.addEventListener('click', () => window.location.reload());
+  let restartWasPaused = false;
+  function openRestartConfirm() {
+    restartWasPaused = paused;
+    if (!paused) setPaused(true);
+    restartConfirm.classList.remove('hidden');
+    restartConfirmBtn.focus();
+  }
+  function closeRestartConfirm() {
+    restartConfirm.classList.add('hidden');
+    if (!restartWasPaused) setPaused(false);
+  }
+  restartBtn.addEventListener('click', openRestartConfirm);
+  restartCancelX.addEventListener('click', closeRestartConfirm);
+  restartCancelBtn.addEventListener('click', closeRestartConfirm);
+  restartConfirmBtn.addEventListener('click', () => window.location.reload());
 
   function frame(t) {
     if (!started) return;
