@@ -381,8 +381,8 @@
       SND.bin();
     }
   }
-  function takeFullBinBag(handOwner, handIndex, ownerId = null) {
-    if (!binIsFull() || handIndex < 0 || (BIN.claimedBy !== null && BIN.claimedBy !== ownerId)) return false;
+  function takeBinBag(handOwner, handIndex, ownerId = null, requireFull = false) {
+    if (BIN.count <= 0 || (requireFull && !binIsFull()) || handIndex < 0 || (BIN.claimedBy !== null && BIN.claimedBy !== ownerId)) return false;
     handOwner[handIndex] = { t: 'binbag' };
     BIN.count = 0;
     BIN.claimedBy = null;
@@ -511,9 +511,7 @@
     if (!carrier || carrier.id !== c.drinkId) return false;
     if (ownerId === null) releaseWaiterAssignment(c.drinkClaimedBy, c, 'drink');
     if (c.state === 'waiting') {
-      const missingPatience = Math.max(0, c.maxPatience - c.patience);
-      const patienceBoost = Math.round(clamp(c.maxPatience * 0.1 + missingPatience * 0.25, 5, 14));
-      c.patience = Math.min(c.maxPatience, c.patience + patienceBoost);
+      boostCustomerPatience(c);
     }
     recordFirstService(c);
     c.drinkDelivered = true;
@@ -598,11 +596,11 @@
       const dessertCustomer = nearestDessertCustomer(p.x, p.y, DELIVER_RADIUS, p.dessert.id, null, true);
       if (dessertCustomer) return { kind: 'deliver-dessert', ok: true, text: 'E: Deliver ' + DESSERTS[p.dessert.id].name, target: dessertCustomer };
     }
-    if (inBinRange(p) && binIsFull()) {
+    if (inBinRange(p) && BIN.count > 0) {
       const hand = p.trash.findIndex((item) => !item);
       return hand >= 0
-        ? { kind: 'take-bin-bag', ok: true, text: 'E: Take full trash bag to door', hand }
-        : { kind: 'take-bin-bag', ok: false, text: 'Trash full · free a hand' };
+        ? { kind: 'take-bin-bag', ok: true, text: 'E: Take trash bag (' + BIN.count + '/' + BIN.capacity + ') to door', hand }
+        : { kind: 'take-bin-bag', ok: false, text: 'Free a hand to take the trash bag' };
     }
     if (inBinRange(p) && (p.drink || p.dessert || p.pizzas.some(Boolean))) {
       const item = p.drink ? 'drink' : p.dessert ? 'dessert' : 'pizza';
@@ -697,9 +695,16 @@
   function serveCustomer(c) {
     recordFirstService(c);
     c.pizzaServiceAt = c.serviceElapsed;
+    boostCustomerPatience(c);
     c.pizzaDelivered = true;
     c.chefOrderClaimedBy = null;
     advanceCompletedOrder(c);
+  }
+  function boostCustomerPatience(c) {
+    if (!c || c.state !== 'waiting') return;
+    const missingPatience = Math.max(0, c.maxPatience - c.patience);
+    const patienceBoost = Math.round(clamp(c.maxPatience * 0.1 + missingPatience * 0.25, 5, 14));
+    c.patience = Math.min(c.maxPatience, c.patience + patienceBoost);
   }
   function deliver(c, handIndex) {
     const p = state.player;
@@ -746,7 +751,7 @@
         if (waiter && waiter.state === 'tofullbin') waiter.state = 'seek';
         BIN.claimedBy = null;
       }
-      takeFullBinBag(p.trash, c.hand);
+      takeBinBag(p.trash, c.hand);
     }
     else if (c.kind === 'discard-held') {
       if (c.item === 'drink') { p.drink = null; state.cash -= 1; shift.stats.wasteCosts += 1; }
@@ -1004,9 +1009,74 @@
     const step = Math.min(d, speed * dt);
     e.x += (dx / d) * step; e.y += (dy / d) * step;
   }
+  function segmentClearOfTables(ax, ay, bx, by, entity) {
+    const vx = bx - ax, vy = by - ay;
+    const lengthSq = vx * vx + vy * vy;
+    for (const table of activeTables()) {
+      const radius = table.r + entity.r + 1;
+      const projection = lengthSq > 0 ? clamp(((table.x - ax) * vx + (table.y - ay) * vy) / lengthSq, 0, 1) : 0;
+      const closestX = ax + vx * projection, closestY = ay + vy * projection;
+      if (dist(closestX, closestY, table.x, table.y) < radius) return false;
+    }
+    return true;
+  }
+  function tableRoute(entity, tx, ty) {
+    const start = { x: entity.x, y: entity.y };
+    const target = { x: tx, y: ty };
+    if (segmentClearOfTables(start.x, start.y, tx, ty, entity)) return [target];
+
+    const nodes = [start, target];
+    for (const table of activeTables()) {
+      const radius = table.r + entity.r + 13;
+      for (let i = 0; i < 12; i++) {
+        const angle = (Math.PI * 2 * i) / 12;
+        const point = {
+          x: clamp(table.x + Math.cos(angle) * radius, 28, W - 28),
+          y: clamp(table.y + Math.sin(angle) * radius, 180, H - 18),
+        };
+        const blocked = activeTables().some((other) => dist(point.x, point.y, other.x, other.y) < other.r + entity.r + 1);
+        if (!blocked) nodes.push(point);
+      }
+    }
+
+    const distanceTo = Array(nodes.length).fill(Infinity);
+    const previous = Array(nodes.length).fill(-1);
+    const visited = Array(nodes.length).fill(false);
+    distanceTo[0] = 0;
+    for (let step = 0; step < nodes.length; step++) {
+      let current = -1;
+      for (let i = 0; i < nodes.length; i++) {
+        if (!visited[i] && (current < 0 || distanceTo[i] < distanceTo[current])) current = i;
+      }
+      if (current < 0 || distanceTo[current] === Infinity || current === 1) break;
+      visited[current] = true;
+      for (let next = 1; next < nodes.length; next++) {
+        if (next === current || visited[next]) continue;
+        if (!segmentClearOfTables(nodes[current].x, nodes[current].y, nodes[next].x, nodes[next].y, entity)) continue;
+        const candidate = distanceTo[current] + dist(nodes[current].x, nodes[current].y, nodes[next].x, nodes[next].y);
+        if (candidate < distanceTo[next]) {
+          distanceTo[next] = candidate;
+          previous[next] = current;
+        }
+      }
+    }
+    if (distanceTo[1] === Infinity) return [target];
+    const route = [];
+    for (let at = 1; at > 0; at = previous[at]) route.unshift(nodes[at]);
+    return route;
+  }
   function moveEntity(e, tx, ty, dt) {
-    const dx = tx - e.x, dy = ty - e.y, d = Math.hypot(dx, dy);
-    if (d < 1) return true;
+    const targetChanged = !e.nav || dist(e.nav.tx, e.nav.ty, tx, ty) > 3;
+    if (targetChanged) e.nav = { tx, ty, points: tableRoute(e, tx, ty) };
+    while (e.nav.points.length > 1 && dist(e.x, e.y, e.nav.points[0].x, e.nav.points[0].y) < 3) e.nav.points.shift();
+    const waypoint = e.nav.points[0] || { x: tx, y: ty };
+    const finalPoint = e.nav.points.length <= 1;
+    const dx = waypoint.x - e.x, dy = waypoint.y - e.y, d = Math.hypot(dx, dy);
+    if (finalPoint && dist(e.x, e.y, tx, ty) < 1) { e.nav = null; return true; }
+    if (d < 0.5) {
+      e.nav = { tx, ty, points: tableRoute(e, tx, ty) };
+      return false;
+    }
     const step = Math.min(d, e.speed * dt);
     let nx = e.x + (dx / d) * step, ny = e.y + (dy / d) * step;
     nx = clamp(nx, 28, W - 28); ny = clamp(ny, 180, H - 18);
@@ -1244,7 +1314,7 @@
       }
       if (moveEntity(w, BIN.x, BIN.y, dt) || dist(w.x, w.y, BIN.x, BIN.y) < 46) {
         const hand = hasFreeHand(w);
-        if (hand >= 0 && takeFullBinBag(w.hands, hand, w.id)) w.state = 'tobagdoor';
+        if (hand >= 0 && takeBinBag(w.hands, hand, w.id, true)) w.state = 'tobagdoor';
         else w.state = 'seek';
       }
       return;
