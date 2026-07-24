@@ -65,6 +65,11 @@
   floorTiles.addEventListener('load', () => { floorTilesReady = true; });
   floorTiles.addEventListener('error', () => { floorTilesReady = false; });
   floorTiles.src = 'assets/floor-tiles-v1.png';
+  const jukeboxSprite = new Image();
+  let jukeboxSpriteReady = false;
+  jukeboxSprite.addEventListener('load', () => { jukeboxSpriteReady = true; });
+  jukeboxSprite.addEventListener('error', () => { jukeboxSpriteReady = false; });
+  jukeboxSprite.src = 'assets/jukebox-sprite-v1.png';
 
   /* ---------- palette (warm pizzeria) ---------- */
   const C = {
@@ -1740,11 +1745,29 @@
   function drawJukebox() {
     if (!progress.jukebox) return;
     const x = 904, y = 500;
-    ctx.fillStyle = '#5a2f32'; roundRect(x - 18, y - 28, 36, 56, 10); ctx.fill();
-    ctx.fillStyle = '#e8b04a'; ctx.beginPath(); ctx.arc(x, y - 10, 12, Math.PI, 0); ctx.fill();
-    ctx.fillStyle = '#303b46'; roundRect(x - 11, y - 10, 22, 22, 4); ctx.fill();
-    ctx.fillStyle = '#f2d15d'; ctx.beginPath(); ctx.arc(x, y + 1, 7, 0, 7); ctx.fill();
-    ctx.fillStyle = '#fff7ec'; ctx.font = "800 8px 'Inter', sans-serif"; ctx.textAlign = 'center'; ctx.fillText('JUKEBOX', x, y + 22);
+    ctx.fillStyle = 'rgba(35,24,20,0.18)';
+    ctx.beginPath(); ctx.ellipse(x, y + 35, 24, 6, 0, 0, Math.PI * 2); ctx.fill();
+    if (jukeboxSpriteReady) {
+      ctx.drawImage(jukeboxSprite, x - 25, y - 40, 50, 75);
+    } else {
+      ctx.fillStyle = '#5a2f32'; roundRect(x - 18, y - 28, 36, 56, 10); ctx.fill();
+      ctx.fillStyle = '#e8b04a'; ctx.beginPath(); ctx.arc(x, y - 10, 12, Math.PI, 0); ctx.fill();
+      ctx.fillStyle = '#303b46'; roundRect(x - 11, y - 10, 22, 22, 4); ctx.fill();
+      ctx.fillStyle = '#f2d15d'; ctx.beginPath(); ctx.arc(x, y + 1, 7, 0, 7); ctx.fill();
+    }
+    ctx.save();
+    ctx.font = "900 11px 'Inter', sans-serif";
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for (let i = 0; i < 4; i++) {
+      const phase = (state.time * 0.42 + i * 0.24) % 1;
+      const noteX = x - 14 + i * 9 + Math.sin(state.time * 2.2 + i * 1.8) * 4;
+      const noteY = y - 35 - phase * 34;
+      ctx.globalAlpha = Math.sin(phase * Math.PI) * 0.82;
+      ctx.fillStyle = i % 2 ? '#70d95b' : '#4fbf69';
+      ctx.fillText(i % 2 ? '\u266a' : '\u266b', noteX, noteY);
+    }
+    ctx.restore();
   }
   function drawDrinkIcon(id, x, y) {
     const drink = DRINKS[id]; if (!drink) return;
