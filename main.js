@@ -1882,9 +1882,9 @@
   }
   function ovenSpriteLayout(count = progress.ovenSlots) {
     const layouts = {
-      1: { sx: 210, sy: 55, sw: 600, sh: 450, dw: 150, dh: 113, y: 56, mouths: [0.502] },
-      2: { sx: 120, sy: 545, sw: 780, sh: 470, dw: 230, dh: 139, y: 42, mouths: [0.276, 0.731] },
-      3: { sx: 50, sy: 1045, sw: 920, sh: 460, dw: 290, dh: 145, y: 38, mouths: [0.217, 0.505, 0.793] },
+      1: { sx: 105, sy: 28, sw: 300, sh: 225, dw: 150, dh: 113, y: 56, mouths: [0.502] },
+      2: { sx: 60, sy: 273, sw: 390, sh: 235, dw: 230, dh: 139, y: 42, mouths: [0.276, 0.731] },
+      3: { sx: 25, sy: 523, sw: 460, sh: 230, dw: 290, dh: 145, y: 38, mouths: [0.217, 0.505, 0.793] },
     };
     const layout = layouts[count] || layouts[1];
     return Object.assign({ x: oven().cx - layout.dw / 2 }, layout);
