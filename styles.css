@@ -671,6 +671,11 @@ canvas#game {
 .confirm-cancel { color: #e8eaff; background: rgba(255, 255, 255, 0.1); }
 .confirm-danger { color: #fff; background: linear-gradient(135deg, #ef3f5b, #d83473); }
 
+.breakdown-card { border-color: rgba(255, 159, 67, 0.62); }
+.breakdown-card .confirm-kicker { color: #ffbd72; }
+.service-actions { flex-wrap: wrap; }
+.service-actions button:disabled { cursor: not-allowed; opacity: 0.42; }
+
 .primary-action {
   width: 100%;
   margin-top: 18px;
