@@ -1882,9 +1882,9 @@
   }
   function ovenSpriteLayout(count = progress.ovenSlots) {
     const layouts = {
-      1: { sx: 105, sy: 28, sw: 300, sh: 225, dw: 150, dh: 113, y: 56, mouths: [0.502] },
-      2: { sx: 60, sy: 273, sw: 390, sh: 235, dw: 230, dh: 139, y: 42, mouths: [0.276, 0.731] },
-      3: { sx: 25, sy: 523, sw: 460, sh: 230, dw: 290, dh: 145, y: 38, mouths: [0.217, 0.505, 0.793] },
+      1: { sx: 105, sy: 28, sw: 300, sh: 225, dw: 125, dh: 94, y: 80, mouths: [0.502] },
+      2: { sx: 60, sy: 273, sw: 390, sh: 235, dw: 190, dh: 115, y: 59, mouths: [0.276, 0.731] },
+      3: { sx: 25, sy: 523, sw: 460, sh: 230, dw: 240, dh: 120, y: 54, mouths: [0.217, 0.505, 0.793] },
     };
     const layout = layouts[count] || layouts[1];
     return Object.assign({ x: oven().cx - layout.dw / 2 }, layout);
@@ -1911,9 +1911,9 @@
     slots.forEach((slot, index) => {
       const cx = layout.x + layout.dw * layout.mouths[index];
       if (slot.pizza) {
-        drawPizza(cx, mouthY, pizzaStage(slot.pizza), progress.ovenSlots === 1 ? 0.78 : 0.68);
+        drawPizza(cx, mouthY, pizzaStage(slot.pizza), progress.ovenSlots === 1 ? 0.66 : 0.58);
         if (slot.baking) {
-          const width = progress.ovenSlots === 1 ? 48 : 40;
+          const width = progress.ovenSlots === 1 ? 40 : 34;
           const pct = clamp(slot.timer / bakeDuration(), 0, 1);
           ctx.fillStyle = 'rgba(0,0,0,0.55)'; roundRect(cx - width / 2, mouthY + 16, width, 4, 2); ctx.fill();
           ctx.fillStyle = C.good; roundRect(cx - width / 2, mouthY + 16, width * pct, 4, 2); ctx.fill();
@@ -1921,7 +1921,7 @@
         if (slot.done) {
           ctx.strokeStyle = '#ffd98a'; ctx.lineWidth = 2;
           ctx.globalAlpha = 0.55 + Math.sin(state.time * 6) * 0.25;
-          ctx.beginPath(); ctx.arc(cx, mouthY, 14, 0, Math.PI * 2); ctx.stroke();
+          ctx.beginPath(); ctx.arc(cx, mouthY, 12, 0, Math.PI * 2); ctx.stroke();
           ctx.globalAlpha = 1;
         }
       }
