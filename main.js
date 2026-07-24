@@ -174,6 +174,8 @@
     { x: 80, y: 585, occupied: false, cust: null },
   ];
   const ENTRANCE = { x: 480, y: 612 };
+  const CUSTOMER_QUEUE_SPOTS = [{ x: 540, y: 585 }, { x: 574, y: 585 }, { x: 608, y: 585 }];
+  const MAX_CUSTOMER_QUEUE = CUSTOMER_QUEUE_SPOTS.length;
   const WAITER_IDLE_SPOTS = [{ x: 540, y: 250 }, { x: 600, y: 250 }, { x: 660, y: 250 }, { x: 720, y: 250 }];
   const RUNNER_IDLE_SPOTS = [{ x: 810, y: 270 }, { x: 810, y: 310 }, { x: 810, y: 350 }];
   const CHEF_IDLE_SPOTS = [{ x: 180, y: 235 }, { x: 240, y: 235 }, { x: 300, y: 235 }, { x: 360, y: 235 }, { x: 420, y: 235 }];
@@ -220,7 +222,7 @@
   };
   const shift = {
     elapsed: 0, showingReport: false, shoppingStartCash: 0,
-    reputation: 50, peakReputation: 50, lowRepTimer: 0, lostStreak: 0,
+    reputation: 50, reputationRemainder: 0, peakReputation: 50, lowRepTimer: 0, lostStreak: 0,
     serviceStreak: 0, bestServiceStreak: 0, repFlash: 0, repFlashTimer: 0,
     stats: null,
   };
@@ -273,38 +275,42 @@
   const bakeDuration = () => BASE_BAKE_DUR / speedMultiplier(progress.ovenLevel);
   const activeOvenSlots = (ov = oven()) => ov.slots.slice(0, progress.ovenSlots);
   const OVEN_SLOT_COSTS = { 2: 100, 3: 400 };
-  const OVEN_CUSTOMER_CAPS = { 1: 4, 2: 7, 3: 10 };
   const OVEN_TRAFFIC_MULTIPLIERS = { 1: 1.25, 2: 1, 3: 0.85 };
   const activeTables = () => TABLES.slice(0, progress.tableCount);
-  const customerCapacity = () => OVEN_CUSTOMER_CAPS[progress.ovenSlots] + (progress.tableCount >= 3 ? 2 : 0);
   const dessertDuration = (id) => (id === 'sundae' ? progress.sundaeFast : progress.milkshakeFast) ? 2 : 3;
   const availableDessertIds = () => progress.iceCreamCabinet ? ['sundae'].concat(progress.milkshakeUnlocked ? ['milkshake'] : []) : [];
-  const discountedStaffCost = (baseCost) => Math.max(1, Math.round(baseCost * Math.pow(0.8, progress.staffDiscountLevel)));
+  const discountedStaffCost = (baseCost) => Math.max(1, Math.round(baseCost * (1 - progress.staffDiscountLevel * 0.1)));
   const money = (value) => String.fromCharCode(36) + Math.round(value);
   const clampReputation = (value) => clamp(Math.round(value), 0, 100);
   function changeReputation(delta) {
     if (!delta || shift.showingReport) return;
-    shift.reputation = clampReputation(shift.reputation + delta);
+    let applied = delta;
+    if (delta > 0) {
+      const diminishingFactor = Math.max(0.1, 1 - shift.reputation / 120);
+      shift.reputationRemainder += delta * diminishingFactor;
+      applied = Math.floor(shift.reputationRemainder);
+      shift.reputationRemainder -= applied;
+      if (applied <= 0) return;
+    }
+    shift.reputation = clampReputation(shift.reputation + applied);
     shift.peakReputation = Math.max(shift.peakReputation, shift.reputation);
-    shift.repFlash = delta;
+    shift.repFlash = applied;
     shift.repFlashTimer = 1.8;
     if (shift.reputation <= 0) showGameOver();
   }
   function recordSuccessfulVisit(c) {
-    let delta = 0;
-    if (c.pizzaServiceAt <= 25) delta += 2;
-    if (c.tipEligible) delta += 1;
-    delta += c.enteredRed ? -1 : 1;
-    if (c.orderedDrink && c.drinkDelivered) delta += 1;
+    const complete = (!c.orderedDrink || c.drinkDelivered) && (!c.orderedDessert || c.dessertDelivered);
+    const excellent = complete && c.tipEligible && c.pizzaServiceAt <= 20;
+    const delta = c.enteredRed ? 0 : excellent ? 2 : 1;
     shift.lostStreak = 0;
     shift.serviceStreak++;
     shift.bestServiceStreak = Math.max(shift.bestServiceStreak, shift.serviceStreak);
-    changeReputation(delta);
+    if (delta) changeReputation(delta);
   }
   function recordLostVisit() {
     shift.lostStreak++;
     shift.serviceStreak = 0;
-    changeReputation(shift.lostStreak === 1 ? -6 : shift.lostStreak === 2 ? -8 : -10);
+    changeReputation(shift.lostStreak === 1 ? -8 : shift.lostStreak === 2 ? -10 : -12);
   }
   function formatRunTime(seconds) {
     const mins = Math.floor(seconds / 60);
@@ -1009,18 +1015,30 @@
     return null;
   }
   function freeTakeaway() { return TAKEAWAY_SPOTS.find((s) => !s.occupied) || null; }
+  const queuedCustomers = () => state.customers.filter((c) => c.state === 'queued' && !c.remove);
+  const insideCustomerCount = () => state.customers.filter((c) => !c.remove && c.state !== 'queued' && c.state !== 'leaving').length;
+  function seatCustomer(c, seat) {
+    seat.occupied = true;
+    seat.cust = c;
+    c.seat = seat;
+    c.tx = seat.x;
+    c.ty = seat.y;
+    c.side = seat.side || 'n';
+    c.table = seat.table || null;
+    c.state = 'entering';
+  }
   function spawnCustomer() {
     const takeaway = Math.random() < 0.33;
-    const seat = takeaway ? freeTakeaway() : freeSeat();
-    if (!seat) return;
-    seat.occupied = true; seat.cust = null;
+    const queue = queuedCustomers();
+    const seat = queue.length === 0 ? (takeaway ? freeTakeaway() : freeSeat()) : null;
+    if (!seat && queue.length >= MAX_CUSTOMER_QUEUE) return false;
     const recipeIds = unlockedRecipeIds();
     const recipeId = recipeIds[(Math.random() * recipeIds.length) | 0];
     const drinkIds = Object.keys(DRINKS);
     const drinkId = progress.sodaCabinet && Math.random() < 0.5 ? drinkIds[(Math.random() * drinkIds.length) | 0] : null;
     const c = {
-      id: Math.random(), recipeId, x: ENTRANCE.x, y: ENTRANCE.y, tx: seat.x, ty: seat.y,
-      seat, takeaway, side: seat.side || 'n', table: seat.table || null, state: 'entering',
+      id: Math.random(), recipeId, x: ENTRANCE.x, y: ENTRANCE.y, tx: ENTRANCE.x, ty: ENTRANCE.y,
+      seat: null, takeaway, side: 'n', table: null, state: seat ? 'entering' : 'queued',
       color: CUST_COLORS[(Math.random() * CUST_COLORS.length) | 0],
       patience: (takeaway ? 42 : 55) * (hostActive ? 1.25 : 1),
       maxPatience: (takeaway ? 42 : 55) * (hostActive ? 1.25 : 1),
@@ -1029,13 +1047,41 @@
       dessertId: null, orderedDessert: false, dessertDelivered: false, dessertClaimedBy: null, dessertDecisionMade: false,
       serviceElapsed: 0, firstServiceAt: null, pizzaServiceAt: Infinity,
       tipEligible: false, enteredRed: false, mood: null,
+      queueElapsed: 0, queuePatience: rand(20, 25) * (hostActive ? 1.25 : 1),
     };
-    seat.cust = c; state.customers.push(c);
+    if (seat) seatCustomer(c, seat);
+    state.customers.push(c);
+    return true;
+  }
+  function admitQueuedCustomers() {
+    while (true) {
+      const queue = queuedCustomers();
+      let admitted = false;
+      for (const c of queue) {
+        const seat = c.takeaway ? freeTakeaway() : freeSeat();
+        if (!seat) continue;
+        seatCustomer(c, seat);
+        admitted = true;
+        break;
+      }
+      if (!admitted) break;
+    }
   }
   function updateCustomer(c, dt) {
     c.bob += dt * 6;
     if (c.firstServiceAt === null && (c.state === 'entering' || c.state === 'waiting' || c.state === 'eating')) c.serviceElapsed += dt;
-    if (c.state === 'entering') {
+    if (c.state === 'queued') {
+      const queue = queuedCustomers();
+      const index = Math.max(0, queue.indexOf(c));
+      const spot = CUSTOMER_QUEUE_SPOTS[Math.min(index, CUSTOMER_QUEUE_SPOTS.length - 1)];
+      moveToward(c, spot.x, spot.y, 78, dt);
+      c.queueElapsed += dt;
+      if (c.queueElapsed >= c.queuePatience) {
+        c.state = 'leaving'; c.mood = 'angry'; shift.stats.lost++;
+        changeReputation(-2);
+        SND.angry();
+      }
+    } else if (c.state === 'entering') {
       moveToward(c, c.tx, c.ty, 78, dt);
       if (dist(c.x, c.y, c.tx, c.ty) < 4) { c.x = c.tx; c.y = c.ty; c.state = 'waiting'; c.waitElapsed = 0; }
     } else if (c.state === 'waiting') {
@@ -2310,8 +2356,13 @@
     }
   }
   function drawCustomer(c) {
-    drawPerson(c.x, c.y, c.color, { bob: c.state === 'waiting' ? c.bob : (c.state === 'entering' || c.state === 'leaving' ? c.bob * 2 : 0) });
-    if (c.state === 'waiting') {
+    drawPerson(c.x, c.y, c.color, { bob: c.state === 'waiting' || c.state === 'queued' ? c.bob : (c.state === 'entering' || c.state === 'leaving' ? c.bob * 2 : 0) });
+    if (c.state === 'queued') {
+      const remaining = Math.max(0, Math.ceil(c.queuePatience - c.queueElapsed));
+      ctx.font = "700 9px 'Inter', sans-serif"; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillStyle = 'rgba(255,248,236,0.82)'; roundRect(c.x - 22, c.y - 36, 44, 17, 6); ctx.fill();
+      ctx.fillStyle = C.text; ctx.fillText('Queue ' + remaining + 's', c.x, c.y - 28);
+    } else if (c.state === 'waiting') {
       const off = { n: { x: 0, y: -34 }, s: { x: 0, y: 34 }, e: { x: 42, y: 0 }, w: { x: -42, y: 0 } }[c.side] || { x: 0, y: -34 };
       const bx = c.x + off.x, by = c.y + off.y;
       const pendingItems = [];
@@ -2386,10 +2437,13 @@
       ctx.globalAlpha = 1;
     }
     const waiting = state.customers.filter((c) => c.state === 'waiting').length;
-    if (waiting > 0) {
-      ctx.fillStyle = 'rgba(26,20,16,0.82)'; roundRect(W / 2 - 56, 54, 112, 30, 8); ctx.fill();
+    const queueLength = queuedCustomers().length;
+    if (waiting > 0 || queueLength > 0) {
+      const orderText = 'Orders: ' + waiting + (queueLength ? ' · Queue: ' + queueLength : '');
+      const hudWidth = queueLength ? 154 : 112;
+      ctx.fillStyle = 'rgba(26,20,16,0.82)'; roundRect(W / 2 - hudWidth / 2, 54, hudWidth, 30, 8); ctx.fill();
       ctx.fillStyle = C.textInv; ctx.font = "700 13px 'Inter', sans-serif"; ctx.textAlign = 'center';
-      ctx.fillText('Orders: ' + waiting, W / 2, 69);
+      ctx.fillText(orderText, W / 2, 69);
     }
     if (binIsFull()) {
       ctx.fillStyle = 'rgba(173,45,39,0.94)'; roundRect(W / 2 - 118, 91, 236, 28, 8); ctx.fill();
@@ -2496,9 +2550,7 @@
     const factor = menuFactor * state.trafficMultiplier * onboardingFactor;
     return [range[0] * factor, range[1] * factor];
   }
-  function activeCustomerCount() {
-    return state.customers.filter((c) => !c.remove && c.state !== 'leaving').length;
-  }
+  function activeCustomerCount() { return insideCustomerCount(); }
   function updateChaos(dt) {
     shift.elapsed += dt;
     shift.repFlashTimer = Math.max(0, shift.repFlashTimer - dt);
@@ -2592,11 +2644,11 @@
     doughUpgradeBtn.querySelector('span').textContent = doughMaxed ? 'Maximum level · +80% speed' : 'Upgrade to Level ' + doughNext + ' · +20% speed · ' + money(doughCost);
     ovenUpgradeBtn.querySelector('span').textContent = ovenMaxed ? 'Maximum level · +80% speed' : 'Upgrade to Level ' + ovenNext + ' · +20% speed · ' + money(ovenCost);
     ovenCapacityUpgradeBtn.querySelector('strong').textContent = 'Oven capacity · ' + progress.ovenSlots + (progress.ovenSlots === 1 ? ' slot' : ' slots');
-    ovenCapacityUpgradeBtn.querySelector('span').textContent = ovenCapacityMaxed ? 'Maximum oven capacity · customer cap ' + customerCapacity() : 'Unlock slot ' + ovenSlotNext + ' · ' + money(ovenSlotCost) + ' · customer cap ' + OVEN_CUSTOMER_CAPS[ovenSlotNext];
-    tableUpgradeBtn.querySelector('span').textContent = progress.tableCount >= 3 ? 'Purchased · 12 customer cap' : progress.ovenSlots < 3 ? 'Requires 3 oven slots · $300' : '4 more seats · customer cap 10 → 12 · $300';
+    ovenCapacityUpgradeBtn.querySelector('span').textContent = ovenCapacityMaxed ? 'Maximum oven capacity · bake 3 pizzas at once' : 'Unlock slot ' + ovenSlotNext + ' · ' + money(ovenSlotCost) + ' · bake one more pizza at once';
+    tableUpgradeBtn.querySelector('span').textContent = progress.tableCount >= 3 ? 'Purchased · 12 dining seats' : progress.ovenSlots < 3 ? 'Requires 3 oven slots · $300' : 'Add 4 more dining seats · $300';
     sodaUpgradeBtn.querySelector('span').textContent = progress.sodaCabinet ? 'Purchased · Coke, Water, Dew' : 'Permanent drinks service · $150';
     staffDiscountUpgradeBtn.querySelector('strong').textContent = 'Cheaper staff · Level ' + progress.staffDiscountLevel;
-    staffDiscountUpgradeBtn.querySelector('span').textContent = staffMaxed ? 'Maximum level · 67% total discount' : 'Upgrade to Level ' + staffNext + ' · 20% cheaper · ' + money(staffCost);
+    staffDiscountUpgradeBtn.querySelector('span').textContent = staffMaxed ? 'Maximum level · 50% total discount' : 'Upgrade to Level ' + staffNext + ' · +10% total discount · ' + money(staffCost);
     jukeboxUpgradeBtn.querySelector('span').textContent = progress.jukebox ? 'Purchased · Patience drains 25% slower' : 'Customers lose patience 25% slower · $100';
     iceCreamUpgradeBtn.querySelector('span').textContent = progress.iceCreamCabinet ? 'Purchased · Sundae service active' : 'Unlock Sundae service · $300';
     sundaeSpeedUpgradeBtn.querySelector('span').textContent = progress.sundaeFast ? 'Purchased · Prep time 2s' : progress.iceCreamCabinet ? 'Prep time 3s → 2s · $100' : 'Requires ice cream cabinet';
@@ -2876,13 +2928,13 @@
     state.chefs = state.chefs.filter((c) => !c.remove);
     updateMaintenance(dt);
     if (paused) { syncHireUI(); return; }
+    admitQueuedCustomers();
     state.spawnTimer -= dt;
     if (state.spawnTimer <= 0) {
-      const cap = customerCapacity();
-      if (activeCustomerCount() < cap) {
-        spawnCustomer();
+      if (queuedCustomers().length < MAX_CUSTOMER_QUEUE) {
+        const spawned = spawnCustomer();
         const range = reputationSpawnRange();
-        state.spawnTimer = rand(range[0], range[1]);
+        state.spawnTimer = spawned ? rand(range[0], range[1]) : 0.75;
       } else {
         state.spawnTimer = 0.75;
       }
