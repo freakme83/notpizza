@@ -140,7 +140,7 @@
   const ING_ICON_Y = 126;
   const WAITER_COST = 20, FAST_WAITER_COST = 25, DRINKS_WAITER_COST = 25, WAITER_DURATION = 420;
   const CHEF_COST = 80, NEAPOLITAN_CHEF_COST = 130, CHEF_DURATION = 420, HOST_COST = 30, HOST_DURATION = 420;
-  const NEAPOLITAN_STYLE_COST = 250, NEAPOLITAN_ORDER_CHANCE = 0.25, NEAPOLITAN_PRICE_MULTIPLIER = 1.2;
+  const NEAPOLITAN_STYLE_COST = 250, NEAPOLITAN_ORDER_CHANCE = 0.30, NEAPOLITAN_PRICE_MULTIPLIER = 1.2;
   const MAINTENANCE_COST = 40, MAINTENANCE_DURATION = 420, MAINTENANCE_TASK_DURATION = 15;
   const MAINTENANCE_EMERGENCY_REPAIR_DURATION = 45, MAINTENANCE_RISK_THRESHOLD = 0.04;
   const JUKEBOX_USE_INTERVAL = 45;
@@ -1058,9 +1058,13 @@
       serviceElapsed: 0, firstServiceAt: null, pizzaServiceAt: Infinity,
       tipEligible: false, enteredRed: false, mood: null,
       queueElapsed: 0, queuePatience: rand(20, 25) * (hostActive ? 1.25 : 1),
-      neapolitan: false,
+      neapolitan: false, neapolitanChefId: null,
     };
-    c.neapolitan = !!seat && progress.neapolitanStyle && Math.random() < NEAPOLITAN_ORDER_CHANCE && canOfferNeapolitanOrder(recipeId, c);
+    const neapolitanChef = !!seat && progress.neapolitanStyle && Math.random() < NEAPOLITAN_ORDER_CHANCE
+      ? chooseNeapolitanChefForOrder(recipeId, c)
+      : null;
+    c.neapolitan = !!neapolitanChef;
+    c.neapolitanChefId = neapolitanChef ? neapolitanChef.id : null;
     if (seat) seatCustomer(c, seat);
     state.customers.push(c);
     return true;
@@ -1739,16 +1743,57 @@
     const patienceDrain = jukeboxWorking() ? 0.75 : 1;
     return customer.patience / patienceDrain > chefOrderEstimateSeconds(customer.recipeId, customer, chef);
   }
-  function canOfferNeapolitanOrder(recipeId, customer) {
-    return state.chefs.some((chef) => chef.neapolitan && !chef.remove && chef.state === 'seekwork' && !chef.clockOutPending
-      && chef.hands.some((hand) => !hand)
-      && chef.timer > chefOrderEstimateSeconds(recipeId, customer, chef) + 10);
+  function chefCurrentCommitmentSeconds(chef) {
+    const multiplier = chefPrepMultiplier(chef);
+    let seconds = 0;
+    if (chef.action) {
+      seconds += Math.max(0, chef.action.duration - chef.action.elapsed);
+      if (chef.action.recipeId && !chef.hands.some(Boolean)) {
+        seconds += RECIPES[chef.action.recipeId].ingredients.slice(1).reduce((sum, id) => sum + ING_MAP[id].dur, 0) * multiplier;
+      }
+    } else if (chef.pending) {
+      seconds += chef.pending.dur * multiplier;
+      if (chef.pending.type === 'knead') {
+        seconds += RECIPES[chef.pending.recipeId].ingredients.slice(1).reduce((sum, id) => sum + ING_MAP[id].dur, 0) * multiplier;
+      }
+    }
+    chef.hands.forEach((hand) => {
+      if (!hand || hand.t !== 'pizza' || hand.pz.baked) return;
+      const recipe = RECIPES[hand.pz.targetRecipeId] || RECIPES[pizzaRecipeId(hand.pz)];
+      if (recipe && !pizzaReadyToBake(hand.pz)) {
+        seconds += recipe.ingredients.filter((id) => !hand.pz.added.has(id)).reduce((sum, id) => sum + ING_MAP[id].dur, 0) * multiplier;
+      }
+      seconds += 2;
+    });
+    return seconds;
   }
+  function chefHasAssignedPremiumOrder(chef) {
+    return state.customers.some((c) => c.neapolitan && !c.pizzaDelivered && c.neapolitanChefId === chef.id
+      && c.state !== 'leaving' && !c.remove);
+  }
+  function chooseNeapolitanChefForOrder(recipeId, customer) {
+    return state.chefs
+      .filter((chef) => chef.neapolitan && !chef.remove && chef.state !== 'leave' && !chef.clockOutPending
+        && !chefHasAssignedPremiumOrder(chef)
+        && chef.timer > chefCurrentCommitmentSeconds(chef) + chefOrderEstimateSeconds(recipeId, customer, chef) + 10)
+      .sort((a, b) => chefCurrentCommitmentSeconds(a) - chefCurrentCommitmentSeconds(b) || b.timer - a.timer)[0] || null;
+  }
+  const activeAssignedNeapolitanChef = (customer) => state.chefs.find((chef) => chef.id === customer.neapolitanChefId
+    && chef.neapolitan && !chef.remove && chef.state !== 'leave' && !chef.clockOutPending);
   function claimableChefCustomer(chef) {
-    return state.customers
-      .filter((c) => c.state === 'waiting' && !c.pizzaDelivered && c.chefOrderClaimedBy === null
-        && !!c.neapolitan === !!chef.neapolitan && chefCanReachCustomer(c, chef))
-      .sort(compareCustomerUrgency)[0] || null;
+    const available = state.customers.filter((c) => c.state === 'waiting' && !c.pizzaDelivered
+      && c.chefOrderClaimedBy === null && chefCanReachCustomer(c, chef));
+    if (chef.neapolitan) {
+      const premium = available
+        .filter((c) => c.neapolitan && (c.neapolitanChefId === chef.id || !activeAssignedNeapolitanChef(c)))
+        .sort(compareCustomerUrgency)[0];
+      if (premium) {
+        premium.neapolitanChefId = chef.id;
+        return premium;
+      }
+      return available.filter((c) => !c.neapolitan).sort(compareCustomerUrgency)[0] || null;
+    }
+    return available.filter((c) => !c.neapolitan).sort(compareCustomerUrgency)[0] || null;
   }
   // chef picks its next task each frame while in 'seekwork'
   function chefNext(chef) {
@@ -1777,7 +1822,7 @@
       if (!target) return;
       target.chefOrderClaimedBy = chef.id;
       chef.state = 'toprep';
-      chef.pending = { type: 'knead', handIdx: freeHand, recipeId: target.recipeId, targetCustomerId: target.id, label: (target.neapolitan ? 'Neapolitan · ' : '') + 'Knead ' + RECIPES[target.recipeId].name, dur: kneadDuration() };
+      chef.pending = { type: 'knead', handIdx: freeHand, recipeId: target.recipeId, targetCustomerId: target.id, neapolitan: !!target.neapolitan, label: (target.neapolitan ? 'Neapolitan · ' : '') + 'Knead ' + RECIPES[target.recipeId].name, dur: kneadDuration() };
       return;
     }
   }
@@ -1786,10 +1831,10 @@
     if (!p) { chef.state = 'seekwork'; return; }
     const dur = p.dur * chefPrepMultiplier(chef);
     if (p.type === 'knead') {
-      chef.action = { label: p.label, duration: dur, elapsed: 0, targetCustomerId: p.targetCustomerId, onComplete: () => {
+      chef.action = { label: p.label, duration: dur, elapsed: 0, targetCustomerId: p.targetCustomerId, recipeId: p.recipeId, onComplete: () => {
         const pizza = newPizza('dough', p.recipeId);
         pizza.targetCustomerId = p.targetCustomerId;
-        pizza.neapolitan = chef.neapolitan;
+        pizza.neapolitan = !!p.neapolitan;
         chef.hands[p.handIdx] = { t: 'pizza', pz: pizza };
         SND.done();
       } };
@@ -2712,7 +2757,7 @@
     sundaeSpeedUpgradeBtn.querySelector('span').textContent = progress.sundaeFast ? 'Purchased · Prep time 2s' : progress.iceCreamCabinet ? 'Prep time 3s → 2s · $100' : 'Requires ice cream cabinet';
     milkshakeUnlockBtn.querySelector('span').textContent = progress.milkshakeUnlocked ? 'Purchased · Sells for $6' : progress.iceCreamCabinet ? 'Unlock Milkshake · $100' : 'Requires ice cream cabinet';
     milkshakeSpeedUpgradeBtn.querySelector('span').textContent = progress.milkshakeFast ? 'Purchased · Prep time 2s' : progress.milkshakeUnlocked ? 'Prep time 3s → 2s · $120' : 'Requires Milkshake';
-    neapolitanStyleUpgradeBtn.querySelector('span').textContent = progress.neapolitanStyle ? 'Purchased · Premium orders enabled' : 'Unlock premium orders · ' + money(NEAPOLITAN_STYLE_COST);
+    neapolitanStyleUpgradeBtn.querySelector('span').textContent = progress.neapolitanStyle ? 'Purchased · 30% premium order chance with specialist' : 'Unlock premium orders · ' + money(NEAPOLITAN_STYLE_COST);
     recipeButtons.forEach((button) => {
       const id = button.dataset.recipe, unlocked = progress.unlockedRecipes.has(id);
       const cost = RECIPES[id].unlockCost || 0;
