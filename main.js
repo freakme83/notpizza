@@ -67,6 +67,17 @@
   playerSprite.addEventListener('load', () => { playerSpriteReady = true; });
   playerSprite.addEventListener('error', () => { playerSpriteReady = false; });
   playerSprite.src = 'assets/player-sprite-sheet-v2.png';
+  const CHEF_SPRITE_CELL = 313.5;
+  const chefSprite = new Image();
+  let chefSpriteReady = false;
+  chefSprite.addEventListener('load', () => { chefSpriteReady = true; });
+  chefSprite.addEventListener('error', () => { chefSpriteReady = false; });
+  chefSprite.src = 'assets/normal-chef-sprite-sheet-v1.png';
+  const neapolitanChefSprite = new Image();
+  let neapolitanChefSpriteReady = false;
+  neapolitanChefSprite.addEventListener('load', () => { neapolitanChefSpriteReady = true; });
+  neapolitanChefSprite.addEventListener('error', () => { neapolitanChefSpriteReady = false; });
+  neapolitanChefSprite.src = 'assets/neapolitan-chef-sprite-sheet-v1.png';
   const floorTiles = new Image();
   let floorTilesReady = false;
   floorTiles.addEventListener('load', () => { floorTilesReady = true; });
@@ -1202,12 +1213,14 @@
     const waypoint = e.nav.points[0] || { x: tx, y: ty };
     const finalPoint = e.nav.points.length <= 1;
     const dx = waypoint.x - e.x, dy = waypoint.y - e.y, d = Math.hypot(dx, dy);
-    if (finalPoint && dist(e.x, e.y, tx, ty) < 1) { e.nav = null; return true; }
+    if (finalPoint && dist(e.x, e.y, tx, ty) < 1) { e.nav = null; e.moving = false; return true; }
     if (d < 0.5) {
       e.nav = { tx, ty, points: tableRoute(e, tx, ty) };
       return false;
     }
     const step = Math.min(d, e.speed * dt);
+    e.moving = true;
+    if (Math.abs(dx) > 0.5) e.dir = dx < 0 ? -1 : 1;
     let nx = e.x + (dx / d) * step, ny = e.y + (dy / d) * step;
     nx = clamp(nx, 28, W - 28); ny = clamp(ny, 180, H - 18);
     for (const t of activeTables()) {
@@ -2378,6 +2391,35 @@
     ctx.fillStyle = pct > 0.33 ? C.good : pct > 0.15 ? '#e0a93a' : C.bad; roundRect(tech.x - 12, tech.y + 18, 24 * pct, 3, 2); ctx.fill();
   }
   function drawChef(chef) {
+    const sprite = chef.neapolitan ? neapolitanChefSprite : chefSprite;
+    const spriteReady = chef.neapolitan ? neapolitanChefSpriteReady : chefSpriteReady;
+    const carried = chef.hands.filter(Boolean);
+    if (spriteReady) {
+      const row = chef.action ? 3 : carried.length ? 2 : chef.moving ? 1 : 0;
+      const frame = chef.moving
+        ? Math.floor(chef.walk * 0.8) % 4
+        : chef.action
+          ? Math.floor(chef.action.elapsed * 3) % 4
+          : Math.floor(state.time * 1.5 + chef.id) % 4;
+      const size = 66;
+      ctx.fillStyle = 'rgba(0,0,0,0.16)';
+      ctx.beginPath(); ctx.ellipse(chef.x, chef.y + 13, 11, 3.5, 0, 0, 7); ctx.fill();
+      ctx.save();
+      ctx.translate(chef.x, 0);
+      ctx.scale(chef.dir || 1, 1);
+      ctx.drawImage(
+        sprite,
+        frame * CHEF_SPRITE_CELL,
+        row * CHEF_SPRITE_CELL,
+        CHEF_SPRITE_CELL,
+        CHEF_SPRITE_CELL,
+        -size / 2,
+        chef.y - 51,
+        size,
+        size
+      );
+      ctx.restore();
+    } else {
     drawPerson(chef.x, chef.y, chef.neapolitan ? '#e9f4e8' : '#f2f2f2', { bob: chef.walk });
     ctx.fillStyle = chef.neapolitan ? '#238b57' : '#c0392b'; roundRect(chef.x - 6, chef.y - 2, 12, 4, 2); ctx.fill();
     if (chef.neapolitan) {
@@ -2389,10 +2431,10 @@
     ctx.beginPath(); ctx.arc(chef.x, chef.y - 19, 7, Math.PI, 0); ctx.fill();
     ctx.beginPath(); ctx.arc(chef.x - 5, chef.y - 18, 4, 0, 7); ctx.fill();
     ctx.beginPath(); ctx.arc(chef.x + 5, chef.y - 18, 4, 0, 7); ctx.fill();
-    const carried = chef.hands.filter(Boolean);
     carried.forEach((h, i) => { const off = carried.length === 1 ? 0 : i === 0 ? -9 : 9; const cx = chef.x + off, cy = chef.y - 26; ctx.fillStyle = C.tray; roundRect(cx - 10, cy - 3, 20, 6, 3); ctx.fill(); if (h.t === 'pizza') drawPizza(cx, cy - 6, pizzaStage(h.pz), 0.8); });
+    }
     if (chef.action) {
-      const pct = chef.action.elapsed / chef.action.duration, bw = 52, bx = chef.x - bw / 2, by = chef.y - 44;
+      const pct = chef.action.elapsed / chef.action.duration, bw = 52, bx = chef.x - bw / 2, by = chef.y - (spriteReady ? 59 : 44);
       ctx.fillStyle = 'rgba(0,0,0,0.55)'; roundRect(bx - 2, by - 2, bw + 4, 12, 6); ctx.fill();
       ctx.fillStyle = C.good; roundRect(bx, by, bw * pct, 8, 4); ctx.fill();
       ctx.font = "700 11px 'Inter', sans-serif"; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
