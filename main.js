@@ -33,6 +33,7 @@
   const breakdownClose = document.getElementById('breakdownClose');
   const regularServiceBtn = document.getElementById('regularServiceBtn');
   const fastServiceBtn = document.getElementById('fastServiceBtn');
+  const maintenanceServiceBtn = document.getElementById('maintenanceServiceBtn');
   const ingredientDropdown = document.getElementById('ingredientDropdown');
   const ingredientToggle = document.getElementById('ingredientToggle');
   const ingredientOptions = document.getElementById('ingredientOptions');
@@ -1495,6 +1496,10 @@
     breakdownDetails.textContent = 'Choose service now or close this window and call later from the device.';
     regularServiceBtn.disabled = state.cash < SERVICE_REGULAR_COST || item.serviceTimer > 0;
     fastServiceBtn.disabled = state.cash < SERVICE_FAST_COST || item.serviceTimer > 0;
+    const maintenanceAvailable = maintenanceTech && maintenanceTech.state !== 'leave' && !maintenanceTech.clockOutPending;
+    maintenanceServiceBtn.classList.toggle('hidden', !maintenanceAvailable);
+    maintenanceServiceBtn.disabled = !maintenanceAvailable
+      || (!!maintenanceTech.requestedTarget && maintenanceTech.requestedTarget !== item);
     breakdownPopup.classList.remove('hidden');
   }
   function closeBreakdownPopup() {
@@ -1521,9 +1526,21 @@
     closeBreakdownPopup();
     refreshReportOptions();
   }
+  function letMaintenanceHandleBreakdown() {
+    const item = pendingBreakdown;
+    const tech = maintenanceTech;
+    if (!item || !item.broken || item.serviceTimer > 0 || !tech || tech.state === 'leave' || tech.clockOutPending) return;
+    if (tech.target === item) { closeBreakdownPopup(); return; }
+    if (tech.requestedTarget && tech.requestedTarget !== item) return;
+    item.maintenanceReserved = true;
+    tech.requestedTarget = item;
+    closeBreakdownPopup();
+    refreshReportOptions();
+  }
   breakdownClose.addEventListener('click', closeBreakdownPopup);
   regularServiceBtn.addEventListener('click', () => callService(false));
   fastServiceBtn.addEventListener('click', () => callService(true));
+  maintenanceServiceBtn.addEventListener('click', letMaintenanceHandleBreakdown);
 
   function equipmentIdle(item) {
     if (item.kind === 'oven') {
@@ -1564,27 +1581,38 @@
     if ((maintenanceTech && maintenanceTech.state !== 'leave') || state.cash < cost) return;
     if (maintenanceTech && maintenanceTech.state === 'leave') maintenanceTech = null;
     state.cash -= cost; shift.stats.staffCosts += cost;
-    maintenanceTech = { x: ENTRANCE.x, y: ENTRANCE.y, r: 13, speed: state.player.speed * 0.72, timer: MAINTENANCE_DURATION, state: 'enter', target: null, emergencyRepair: false, taskDuration: MAINTENANCE_TASK_DURATION, actionElapsed: 0, walk: 0 };
+    maintenanceTech = {
+      x: ENTRANCE.x, y: ENTRANCE.y, r: 13, speed: state.player.speed * 0.72,
+      timer: MAINTENANCE_DURATION, state: 'enter', target: null, requestedTarget: null,
+      emergencyRepair: false, taskDuration: MAINTENANCE_TASK_DURATION, actionElapsed: 0,
+      walk: 0, clockOutPending: false,
+    };
     SND.hire();
+  }
+  function finishMaintenanceShift(tech) {
+    tech.state = 'leave';
+    tech.timer = 0;
+    showStaffShiftNotice('maintenance');
   }
   function updateMaintenance(dt) {
     const tech = maintenanceTech;
     if (!tech) return;
     tech.walk += dt * 5;
-    if (tech.state !== 'leave') {
+    if (tech.state !== 'leave' && !tech.clockOutPending) {
       tech.timer -= dt;
       if (tech.timer <= 0) {
-        if (tech.target) tech.target.maintenanceReserved = false;
-        tech.target = null; tech.state = 'leave'; tech.timer = 0;
-        showStaffShiftNotice('maintenance');
-        return;
+        tech.timer = 0;
+        if (tech.target || tech.requestedTarget || tech.state === 'to-device' || tech.state === 'maintaining') tech.clockOutPending = true;
+        else { finishMaintenanceShift(tech); return; }
       }
     }
     if (tech.state === 'enter') { if (moveEntity(tech, MAINTENANCE_IDLE.x, MAINTENANCE_IDLE.y, dt)) tech.state = 'idle'; return; }
     if (tech.state === 'leave') { if (moveEntity(tech, ENTRANCE.x, H - 18, dt)) maintenanceTech = null; return; }
     if (tech.state === 'idle') {
-      const target = chooseMaintenanceTarget();
+      if (tech.clockOutPending && !tech.requestedTarget) { finishMaintenanceShift(tech); return; }
+      const target = tech.requestedTarget || (!tech.clockOutPending ? chooseMaintenanceTarget() : null);
       if (target) {
+        if (tech.requestedTarget === target) tech.requestedTarget = null;
         target.maintenanceReserved = true;
         tech.target = target;
         tech.emergencyRepair = target.broken;
@@ -1655,7 +1683,7 @@
       id: ++waiterSeq, x: ENTRANCE.x, y: ENTRANCE.y, r: 13,
       speed: base * (fast ? 1.3 : 1), fast, drinksOnly,
       hands: [null, null], state: 'enter', action: null, targetSlot: -1, targetCust: null, targetTrash: null, targetDrinkCust: null, targetDessertCust: null,
-      timer: WAITER_DURATION, walk: 0, roleSlot, foodBoost: false,
+      timer: WAITER_DURATION, walk: 0, roleSlot, foodBoost: false, clockOutPending: false,
     };
     state.waiters.push(w); SND.hire();
   }
@@ -1682,7 +1710,7 @@
     for (const { slot: s, index: i } of readySlots) {
       let best = null, bd = 1e9;
       for (const w of state.waiters) {
-        if (w.remove || w.state !== 'seek' || w.drinksOnly) continue;
+        if (w.remove || w.state !== 'seek' || w.drinksOnly || w.clockOutPending) continue;
         if (hasFreeHand(w) < 0) continue;
         const d = dist(w.x, w.y, ov.use.x, ov.use.y);
         if (d < bd) { bd = d; best = w; }
@@ -1714,6 +1742,16 @@
     }
     const drinkHand = carriedDrinkHand(w);
     const dessertHand = carriedDessertHand(w);
+    if (w.clockOutPending) {
+      if (carriedBinBagHand(w) >= 0) { w.state = 'tobagdoor'; return; }
+      if (carriedTrashHand(w) >= 0) { w.state = 'tobin'; return; }
+      if (drinkHand >= 0) { w.state = 'todrinkcust'; return; }
+      if (dessertHand >= 0) { w.state = 'todessertcust'; return; }
+      if (pizzaHand >= 0) return;
+      w.state = 'leave';
+      showStaffShiftNotice(w.drinksOnly ? 'drinks' : w.fast ? 'fast' : 'normal');
+      return;
+    }
     if (w.drinksOnly) {
       if (drinkHand >= 0) { w.state = 'todrinkcust'; return; }
       if (dessertHand >= 0) { w.state = 'todessertcust'; return; }
@@ -1764,13 +1802,19 @@
     w.hands.forEach((hand) => {
       if (hand && hand.t === 'pizza' && hand.discardGrace !== undefined) hand.discardGrace -= dt;
     });
-    if (w.state !== 'leave') {
+    if (w.state !== 'leave' && !w.clockOutPending) {
       w.timer -= dt;
       if (w.timer <= 0) {
         w.timer = 0;
-        w.state = 'leave';
-        showStaffShiftNotice(w.drinksOnly ? 'drinks' : w.fast ? 'fast' : 'normal');
-        return;
+        const hasActiveWork = w.state !== 'seek' || w.hands.some(Boolean) || w.action
+          || w.targetSlot >= 0 || w.targetCust || w.targetTrash || w.targetDrinkCust || w.targetDessertCust
+          || BIN.claimedBy === w.id;
+        if (hasActiveWork) w.clockOutPending = true;
+        else {
+          w.state = 'leave';
+          showStaffShiftNotice(w.drinksOnly ? 'drinks' : w.fast ? 'fast' : 'normal');
+          return;
+        }
       }
     }
 
@@ -2172,7 +2216,8 @@
       chef.timer -= dt;
       if (chef.timer <= 0) {
         chef.timer = 0;
-        const hasPizzaWork = chef.neapolitan && (chef.hands.some(Boolean) || chef.action || chef.pending || chef.state === 'toprep' || chef.state === 'prepping' || chef.state === 'tooven');
+        const hasPizzaWork = chef.hands.some(Boolean) || chef.action || chef.pending
+          || chef.state === 'toprep' || chef.state === 'prepping' || chef.state === 'tooven';
         if (hasPizzaWork) chef.clockOutPending = true;
         else finishChefShift(chef);
         return;
