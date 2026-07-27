@@ -2463,7 +2463,10 @@
       // turn the source rectangle into NaN and leave only the shadow visible.
       const animationTime = Number.isFinite(state.time) ? state.time : 0;
       const frame = Math.floor(animationTime * (chef.moving ? 7 : 1.5) + chef.id) & 3;
-      const size = 66;
+      // Motion-sheet figures occupy less of each source cell than the prep
+      // figures. A slightly larger draw box keeps apparent adult height
+      // consistent while walking, waiting and carrying.
+      const size = 74;
       ctx.fillStyle = 'rgba(0,0,0,0.16)';
       ctx.beginPath(); ctx.ellipse(chef.x, chef.y + 13, 11, 3.5, 0, 0, 7); ctx.fill();
       ctx.save();
@@ -2476,7 +2479,7 @@
         CHEF_SPRITE_CELL,
         CHEF_SPRITE_CELL,
         -size / 2,
-        chef.y - 51,
+        chef.y - 59,
         size,
         size
       );
