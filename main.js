@@ -50,6 +50,7 @@
   const doughUpgradeBtn = document.getElementById('doughUpgrade');
   const ovenUpgradeBtn = document.getElementById('ovenUpgrade');
   const ovenCapacityUpgradeBtn = document.getElementById('ovenCapacityUpgrade');
+  const expandedPrepUpgradeBtn = document.getElementById('expandedPrepUpgrade');
   const tableUpgradeBtn = document.getElementById('tableUpgrade');
   const sodaUpgradeBtn = document.getElementById('sodaUpgrade');
   const staffDiscountUpgradeBtn = document.getElementById('staffDiscountUpgrade');
@@ -232,9 +233,10 @@
   const WAITER_IDLE_SPOTS = [{ x: 540, y: 250 }, { x: 600, y: 250 }, { x: 660, y: 250 }, { x: 720, y: 250 }];
   const RUNNER_IDLE_SPOTS = [{ x: 810, y: 270 }, { x: 810, y: 310 }, { x: 810, y: 350 }];
   const CHEF_IDLE_SPOTS = [{ x: 180, y: 235 }, { x: 240, y: 235 }, { x: 300, y: 235 }, { x: 360, y: 235 }, { x: 420, y: 235 }];
-  // These two points line up with the prep sprite's two dough circles.
-  // Extra chefs wait for a free work surface instead of stacking beside it.
-  const CHEF_PREP_SPOTS = [{ x: 268, y: 194 }, { x: 336, y: 194 }];
+  // The base station supports two chefs. Expanded Prep Crew redistributes
+  // three work points across the same visual counter without changing its art.
+  const BASE_CHEF_PREP_SPOTS = [{ x: 268, y: 194 }, { x: 336, y: 194 }];
+  const EXPANDED_CHEF_PREP_SPOTS = [{ x: 244, y: 194 }, { x: 302, y: 194 }, { x: 360, y: 194 }];
   const MAINTENANCE_IDLE = { x: 920, y: 580 };
 
   function overflowStaffSpot(spots, index, rowGap = 28) {
@@ -251,14 +253,16 @@
   }
   function claimChefPrepSpot(chef) {
     if (chef.prepSpot >= 0) return true;
+    const spots = chefPrepSpots();
     const used = new Set(state.chefs.filter((other) => other !== chef && other.prepSpot >= 0).map((other) => other.prepSpot));
     let index = 0;
-    while (index < CHEF_PREP_SPOTS.length && used.has(index)) index++;
-    if (index >= CHEF_PREP_SPOTS.length) return false;
+    while (index < spots.length && used.has(index)) index++;
+    if (index >= spots.length) return false;
     chef.prepSpot = index;
     return true;
   }
-  const chefPrepPoint = (chef) => CHEF_PREP_SPOTS[Math.max(0, chef.prepSpot)];
+  const chefPrepSpots = () => progress.expandedPrepCrew ? EXPANDED_CHEF_PREP_SPOTS : BASE_CHEF_PREP_SPOTS;
+  const chefPrepPoint = (chef) => chefPrepSpots()[Math.max(0, chef.prepSpot)];
   function stationWorkPoint(station, w) {
     const offsets = [-22, 0, 22];
     return { x: station.use.x - 12, y: station.use.y + offsets[w.roleSlot % offsets.length] };
@@ -274,7 +278,7 @@
   };
   const progress = {
     doughLevel: 1, ovenLevel: 1, ovenSlots: 1, tableCount: 2, staffDiscountLevel: 0, sodaCabinet: false, jukebox: false, neapolitanStyle: false,
-    iceCreamCabinet: false, milkshakeUnlocked: false, sundaeFast: false, milkshakeFast: false,
+    iceCreamCabinet: false, milkshakeUnlocked: false, sundaeFast: false, milkshakeFast: false, expandedPrepCrew: false,
     unlockedRecipes: new Set(['margherita']),
   };
   const BANK_PAYMENT_INTERVAL = 180;
@@ -339,6 +343,7 @@
   const bakeDuration = () => BASE_BAKE_DUR / speedMultiplier(progress.ovenLevel);
   const activeOvenSlots = (ov = oven()) => ov.slots.slice(0, progress.ovenSlots);
   const OVEN_SLOT_COSTS = { 2: 100, 3: 400 };
+  const EXPANDED_PREP_COST = 350;
   const OVEN_TRAFFIC_MULTIPLIERS = { 1: 1.25, 2: 1, 3: 0.85 };
   const ownedTables = () => TABLES.slice(0, progress.tableCount);
   const activeTables = () => ownedTables().filter((table) => table !== TABLES[2] || !bank.seized.has('table-3'));
@@ -3159,6 +3164,7 @@
     const ovenSlotCost = OVEN_SLOT_COSTS[ovenSlotNext] || 0;
     const ovenCapacityMaxed = progress.ovenSlots >= 3;
     ovenCapacityUpgradeBtn.disabled = ovenCapacityMaxed || state.cash < ovenSlotCost;
+    expandedPrepUpgradeBtn.disabled = progress.expandedPrepCrew || progress.ovenSlots < 3 || state.cash < EXPANDED_PREP_COST;
     tableUpgradeBtn.disabled = progress.tableCount >= 3 || progress.ovenSlots < 3 || state.cash < 300;
     sodaUpgradeBtn.disabled = progress.sodaCabinet || state.cash < 150;
     const staffNext = progress.staffDiscountLevel + 1;
@@ -3174,6 +3180,7 @@
     doughUpgradeBtn.classList.toggle('purchased', doughMaxed);
     ovenUpgradeBtn.classList.toggle('purchased', ovenMaxed);
     ovenCapacityUpgradeBtn.classList.toggle('purchased', ovenCapacityMaxed);
+    expandedPrepUpgradeBtn.classList.toggle('purchased', progress.expandedPrepCrew);
     tableUpgradeBtn.classList.toggle('purchased', progress.tableCount >= 3);
     sodaUpgradeBtn.classList.toggle('purchased', progress.sodaCabinet);
     staffDiscountUpgradeBtn.classList.toggle('purchased', staffMaxed);
@@ -3189,6 +3196,11 @@
     ovenUpgradeBtn.querySelector('span').textContent = ovenMaxed ? 'Maximum level · +80% speed' : 'Upgrade to Level ' + ovenNext + ' · +20% speed · ' + money(ovenCost);
     ovenCapacityUpgradeBtn.querySelector('strong').textContent = 'Oven capacity · ' + progress.ovenSlots + (progress.ovenSlots === 1 ? ' slot' : ' slots');
     ovenCapacityUpgradeBtn.querySelector('span').textContent = ovenCapacityMaxed ? 'Maximum oven capacity · bake 3 pizzas at once' : 'Unlock slot ' + ovenSlotNext + ' · ' + money(ovenSlotCost) + ' · bake one more pizza at once';
+    expandedPrepUpgradeBtn.querySelector('span').textContent = progress.expandedPrepCrew
+      ? 'Purchased · 3 chefs can prep simultaneously'
+      : progress.ovenSlots < 3
+        ? 'Requires 3 oven slots · ' + money(EXPANDED_PREP_COST)
+        : 'Add a third simultaneous chef work point · ' + money(EXPANDED_PREP_COST);
     tableUpgradeBtn.querySelector('span').textContent = progress.tableCount >= 3 ? 'Purchased · 12 dining seats' : progress.ovenSlots < 3 ? 'Requires 3 oven slots · $300' : 'Add 4 more dining seats · $300';
     sodaUpgradeBtn.querySelector('span').textContent = progress.sodaCabinet ? 'Purchased · Coke, Water, Dew' : 'Permanent drinks service · $150';
     staffDiscountUpgradeBtn.querySelector('strong').textContent = 'Cheaper staff · Level ' + progress.staffDiscountLevel;
@@ -3220,6 +3232,7 @@
     if (ovenCost && state.cash >= ovenCost) count++;
     const ovenSlotCost = OVEN_SLOT_COSTS[progress.ovenSlots + 1];
     if (ovenSlotCost && state.cash >= ovenSlotCost) count++;
+    if (!progress.expandedPrepCrew && progress.ovenSlots >= 3 && state.cash >= EXPANDED_PREP_COST) count++;
     if (progress.ovenSlots >= 3 && progress.tableCount < 3 && state.cash >= 300) count++;
     if (!progress.sodaCabinet && state.cash >= 150) count++;
     const staffCost = STAFF_DISCOUNT_COSTS[progress.staffDiscountLevel + 1];
@@ -3275,6 +3288,12 @@
     progress.ovenSlots = next;
     state.trafficTarget = OVEN_TRAFFIC_MULTIPLIERS[next];
     state.trafficRampRemaining = 30;
+    refreshReportOptions();
+  });
+  expandedPrepUpgradeBtn.addEventListener('click', () => {
+    if (progress.expandedPrepCrew || progress.ovenSlots < 3 || state.cash < EXPANDED_PREP_COST) return;
+    state.cash -= EXPANDED_PREP_COST;
+    progress.expandedPrepCrew = true;
     refreshReportOptions();
   });
   tableUpgradeBtn.addEventListener('click', () => {
