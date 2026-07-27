@@ -690,6 +690,7 @@
   const carriedBinBagHand = (w) => w.hands.findIndex((h) => h && h.t === 'binbag');
   const carriedDrinkHand = (w) => w.hands.findIndex((h) => h && h.t === 'drink');
   const carriedDessertHand = (w) => w.hands.findIndex((h) => h && h.t === 'dessert');
+  const staffBoostMultiplier = (staff) => staff && staff.foodBoost ? 1.2 : 1;
   const binIsFull = () => BIN.count >= BIN.capacity;
   function depositPlayerTrash() {
     const p = state.player;
@@ -1457,7 +1458,7 @@
       e.nav = { tx, ty, points: tableRoute(e, tx, ty) };
       return false;
     }
-    const step = Math.min(d, e.speed * dt);
+    const step = Math.min(d, e.speed * staffBoostMultiplier(e) * dt);
     e.moving = true;
     if (Math.abs(dx) > 0.5) e.dir = dx < 0 ? -1 : 1;
     let nx = e.x + (dx / d) * step, ny = e.y + (dy / d) * step;
@@ -1646,7 +1647,7 @@
       id: ++waiterSeq, x: ENTRANCE.x, y: ENTRANCE.y, r: 13,
       speed: base * (fast ? 1.3 : 1), fast, drinksOnly,
       hands: [null, null], state: 'enter', action: null, targetSlot: -1, targetCust: null, targetTrash: null, targetDrinkCust: null, targetDessertCust: null,
-      timer: WAITER_DURATION, walk: 0, roleSlot,
+      timer: WAITER_DURATION, walk: 0, roleSlot, foodBoost: false,
     };
     state.waiters.push(w); SND.hire();
   }
@@ -1683,6 +1684,26 @@
   }
 
   function pickWaiterJob(w, dt) {
+    const pizzaHand = carriedPizzaHand(w);
+    if (!w.drinksOnly && pizzaHand >= 0) {
+      const hand = w.hands[pizzaHand];
+      const customer = preferredCustomerForPizza(hand.pz);
+      if (customer) {
+        customer.claimedBy = w.id;
+        w.targetCust = customer;
+        delete hand.discardGrace;
+        w.state = 'tocust';
+        return;
+      }
+      if (hand.discardGrace !== undefined && hand.discardGrace <= 0) {
+        w.state = 'discard';
+        return;
+      }
+      if (hand.discardGrace === undefined) {
+        w.state = 'tocust';
+        return;
+      }
+    }
     const drinkHand = carriedDrinkHand(w);
     const dessertHand = carriedDessertHand(w);
     if (w.drinksOnly) {
@@ -1702,7 +1723,6 @@
       const idle = waiterIdlePoint(w);
       moveEntity(w, idle.x, idle.y, dt); return;
     }
-    if (!w.drinksOnly && carriedPizzaHand(w) >= 0) { w.state = 'tocust'; return; }
     if (!w.drinksOnly && carriedBinBagHand(w) >= 0) { w.state = 'tobagdoor'; return; }
     if (!w.drinksOnly && binIsFull() && BIN.claimedBy === null && hasFreeHand(w) >= 0) {
       BIN.claimedBy = w.id;
@@ -1733,6 +1753,9 @@
 
   function updateWaiter(w, dt) {
     w.walk += dt * 6;
+    w.hands.forEach((hand) => {
+      if (hand && hand.t === 'pizza' && hand.discardGrace !== undefined) hand.discardGrace -= dt;
+    });
     if (w.state !== 'leave') {
       w.timer -= dt;
       if (w.timer <= 0) {
@@ -1748,7 +1771,7 @@
     if (w.state === 'makingdessert') {
       const target = w.targetDessertCust;
       if (!target || target.state !== 'waiting' || target.dessertDelivered || target.dessertClaimedBy !== w.id) { w.action = null; w.targetDessertCust = null; w.state = 'seek'; return; }
-      w.action.elapsed += dt;
+      w.action.elapsed += dt * staffBoostMultiplier(w);
       if (w.action.elapsed >= w.action.duration) {
         const hand = hasFreeHand(w);
         if (hand >= 0) w.hands[hand] = { t: 'dessert', id: target.dessertId };
@@ -1799,7 +1822,19 @@
       if (!w.targetCust || w.targetCust.state !== 'waiting' || w.targetCust.pizzaDelivered || w.targetCust.claimedBy !== w.id) {
         if (w.targetCust && w.targetCust.claimedBy === w.id) w.targetCust.claimedBy = null;
         const pick = preferredCustomerForPizza(w.hands[ph].pz);
-        if (!pick) { w.targetCust = null; w.state = 'discard'; return; }
+        if (!pick) {
+          w.targetCust = null;
+          if (!w.foodBoost) {
+            w.hands[ph] = null;
+            w.foodBoost = true;
+            SND.done();
+            w.state = 'seek';
+          } else {
+            if (w.hands[ph].discardGrace === undefined) w.hands[ph].discardGrace = 5;
+            w.state = 'seek';
+          }
+          return;
+        }
         pick.claimedBy = w.id; w.targetCust = pick;
       }
       const tgt = w.targetCust;
@@ -1937,12 +1972,15 @@
       const drinkHand = carriedDrinkHand(w);
       const dessertHand = carriedDessertHand(w);
       if (pizzaHand >= 0) {
-        const carriedPizza = w.hands[pizzaHand].pz;
+        const carriedHand = w.hands[pizzaHand];
+        const carriedPizza = carriedHand.pz;
         const recipeId = pizzaRecipeId(carriedPizza);
         const renewed = mostImpatientUnclaimed(recipeId, !!carriedPizza.neapolitan);
         if (renewed) {
+          delete carriedHand.discardGrace;
           renewed.claimedBy = w.id; w.targetCust = renewed; w.state = 'tocust'; return;
         }
+        if (carriedHand.discardGrace === undefined || carriedHand.discardGrace > 0) { w.state = 'seek'; return; }
       }
       if (drinkHand >= 0) {
         const renewed = mostUrgentDrinkCustomer(w.hands[drinkHand].id, w.id);
@@ -1986,7 +2024,9 @@
     const recipe = RECIPES[recipeId];
     if (!recipe || !customer) return Infinity;
     const prepSeconds = (kneadDuration() + recipe.ingredients.slice(1).reduce((sum, id) => sum + ING_MAP[id].dur, 0)) * chefPrepMultiplier(chef);
-    const fastestWaiter = state.waiters.filter((w) => !w.remove && w.state !== 'leave' && !w.drinksOnly).reduce((speed, w) => Math.max(speed, w.speed), 0);
+    const fastestWaiter = state.waiters
+      .filter((w) => !w.remove && w.state !== 'leave' && !w.drinksOnly)
+      .reduce((speed, w) => Math.max(speed, w.speed * staffBoostMultiplier(w)), 0);
     const deliverySpeed = Math.max(state.player.speed, fastestWaiter);
     const deliverySeconds = dist(oven().use.x, oven().use.y, customer.x, customer.y) / deliverySpeed + 1.5;
     return prepSeconds + bakeDuration() + deliverySeconds + 2;
@@ -2755,6 +2795,13 @@
     const pct = clamp(w.timer / WAITER_DURATION, 0, 1), bw = 24, bx = w.x - bw / 2, by = w.y + 18;
     ctx.fillStyle = 'rgba(0,0,0,0.35)'; roundRect(bx, by, bw, 3, 2); ctx.fill();
     ctx.fillStyle = pct > 0.33 ? C.good : pct > 0.15 ? '#e0a93a' : C.bad; roundRect(bx, by, bw * pct, 3, 2); ctx.fill();
+    if (w.foodBoost) {
+      ctx.fillStyle = '#ffd54f';
+      ctx.font = "900 10px 'Inter', sans-serif";
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('⚡', w.x + 15, w.y - 17);
+    }
 
     const taskLabels = {
       tocust: 'Serve pizza',
@@ -2770,7 +2817,10 @@
       discard: 'Discard item',
       leave: 'Clocking out'
     };
-    const task = taskLabels[w.state];
+    const gracePizza = w.hands.find((hand) => hand && hand.t === 'pizza' && hand.discardGrace !== undefined);
+    const task = w.state === 'seek' && gracePizza
+      ? 'Pizza hold · ' + Math.max(0, Math.ceil(gracePizza.discardGrace)) + 's'
+      : taskLabels[w.state];
     if (task) {
       ctx.font = "italic 600 9px 'Inter', sans-serif";
       const bubbleW = ctx.measureText(task).width + 14;
