@@ -140,6 +140,8 @@
   const WAITER_COST = 20, FAST_WAITER_COST = 25, DRINKS_WAITER_COST = 25, WAITER_DURATION = 420;
   const CHEF_COST = 80, CHEF_DURATION = 420, HOST_COST = 30, HOST_DURATION = 420;
   const MAINTENANCE_COST = 40, MAINTENANCE_DURATION = 420, MAINTENANCE_TASK_DURATION = 15;
+  const MAINTENANCE_EMERGENCY_REPAIR_DURATION = 45, MAINTENANCE_RISK_THRESHOLD = 0.04;
+  const JUKEBOX_USE_INTERVAL = 45;
   const SERVICE_REGULAR_COST = 25, SERVICE_FAST_COST = 45;
   const DRINKS = {
     coke: { name: 'Coke', price: 2, color: '#c0392b' },
@@ -1273,8 +1275,13 @@
     return { x: 870, y: 500 };
   }
   function chooseMaintenanceTarget() {
-    return allEquipment()
-      .filter((item) => !item.broken && item.serviceTimer <= 0 && !item.maintenanceReserved && equipmentIdle(item) && equipmentRisk(item) >= 0.1)
+    const available = allEquipment().filter((item) => item.serviceTimer <= 0 && !item.maintenanceReserved);
+    const broken = available
+      .filter((item) => item.broken)
+      .sort((a, b) => maintenancePriority(a) - maintenancePriority(b))[0];
+    if (broken) return broken;
+    return available
+      .filter((item) => !item.broken && equipmentIdle(item) && equipmentRisk(item) >= MAINTENANCE_RISK_THRESHOLD)
       .sort((a, b) => maintenancePriority(a) - maintenancePriority(b) || equipmentRisk(b) - equipmentRisk(a))[0] || null;
   }
   function hireMaintenance() {
@@ -1282,7 +1289,7 @@
     if ((maintenanceTech && maintenanceTech.state !== 'leave') || state.cash < cost) return;
     if (maintenanceTech && maintenanceTech.state === 'leave') maintenanceTech = null;
     state.cash -= cost; shift.stats.staffCosts += cost;
-    maintenanceTech = { x: ENTRANCE.x, y: ENTRANCE.y, r: 13, speed: state.player.speed * 0.72, timer: MAINTENANCE_DURATION, state: 'enter', target: null, actionElapsed: 0, walk: 0 };
+    maintenanceTech = { x: ENTRANCE.x, y: ENTRANCE.y, r: 13, speed: state.player.speed * 0.72, timer: MAINTENANCE_DURATION, state: 'enter', target: null, emergencyRepair: false, taskDuration: MAINTENANCE_TASK_DURATION, actionElapsed: 0, walk: 0 };
     SND.hire();
   }
   function updateMaintenance(dt) {
@@ -1302,14 +1309,20 @@
     if (tech.state === 'leave') { if (moveEntity(tech, ENTRANCE.x, H - 18, dt)) maintenanceTech = null; return; }
     if (tech.state === 'idle') {
       const target = chooseMaintenanceTarget();
-      if (target) { target.maintenanceReserved = true; tech.target = target; tech.state = 'to-device'; }
+      if (target) {
+        target.maintenanceReserved = true;
+        tech.target = target;
+        tech.emergencyRepair = target.broken;
+        tech.taskDuration = tech.emergencyRepair ? MAINTENANCE_EMERGENCY_REPAIR_DURATION : MAINTENANCE_TASK_DURATION;
+        tech.state = 'to-device';
+      }
       else moveEntity(tech, MAINTENANCE_IDLE.x, MAINTENANCE_IDLE.y, dt);
       return;
     }
     if (tech.state === 'to-device') {
-      if (!tech.target || tech.target.broken || tech.target.serviceTimer > 0) {
+      if (!tech.target || tech.target.serviceTimer > 0 || (!tech.emergencyRepair && tech.target.broken)) {
         if (tech.target) tech.target.maintenanceReserved = false;
-        tech.target = null; tech.state = 'idle'; return;
+        tech.target = null; tech.emergencyRepair = false; tech.taskDuration = MAINTENANCE_TASK_DURATION; tech.state = 'idle'; return;
       }
       const point = maintenanceWorkPoint(tech.target);
       if (moveEntity(tech, point.x, point.y, dt)) { tech.actionElapsed = 0; tech.state = 'maintaining'; }
@@ -1317,9 +1330,9 @@
     }
     if (tech.state === 'maintaining') {
       tech.actionElapsed += dt;
-      if (tech.actionElapsed >= MAINTENANCE_TASK_DURATION) {
+      if (tech.actionElapsed >= tech.taskDuration) {
         resetEquipment(tech.target);
-        tech.target = null; tech.actionElapsed = 0; tech.state = 'idle'; SND.done();
+        tech.target = null; tech.emergencyRepair = false; tech.taskDuration = MAINTENANCE_TASK_DURATION; tech.actionElapsed = 0; tech.state = 'idle'; SND.done();
       }
     }
   }
@@ -1332,7 +1345,10 @@
     }
     if (jukeboxWorking()) {
       jukeboxWearTimer += dt;
-      while (jukeboxWearTimer >= 30) { jukeboxWearTimer -= 30; registerEquipmentUse(equipment.jukebox); }
+      while (jukeboxWearTimer >= JUKEBOX_USE_INTERVAL) {
+        jukeboxWearTimer -= JUKEBOX_USE_INTERVAL;
+        registerEquipmentUse(equipment.jukebox);
+      }
     }
   }
 
@@ -2267,14 +2283,14 @@
     ctx.fillStyle = '#263238'; ctx.font = "900 8px 'Inter', sans-serif"; ctx.textAlign = 'center';
     ctx.fillText('TECH', tech.x, tech.y + 5);
     if (tech.target && (tech.state === 'to-device' || tech.state === 'maintaining')) {
-      const task = 'Maintain ' + tech.target.label;
+      const task = (tech.emergencyRepair ? 'Repair ' : 'Maintain ') + tech.target.label;
       ctx.font = "italic 600 9px 'Inter', sans-serif";
       const width = ctx.measureText(task).width + 14, y = tech.y - 38;
       ctx.fillStyle = 'rgba(220,250,244,0.72)'; roundRect(tech.x - width / 2, y - 9, width, 18, 7); ctx.fill();
       ctx.fillStyle = 'rgba(26,71,65,0.8)'; ctx.fillText(task, tech.x, y);
     }
     if (tech.state === 'maintaining') {
-      const pct = tech.actionElapsed / MAINTENANCE_TASK_DURATION;
+      const pct = tech.actionElapsed / tech.taskDuration;
       ctx.fillStyle = 'rgba(0,0,0,0.45)'; roundRect(tech.x - 27, tech.y - 28, 54, 6, 3); ctx.fill();
       ctx.fillStyle = '#68e3bd'; roundRect(tech.x - 27, tech.y - 28, 54 * pct, 6, 3); ctx.fill();
     }
