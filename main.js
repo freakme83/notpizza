@@ -80,6 +80,16 @@
   neapolitanChefSprite.addEventListener('load', () => { neapolitanChefSpriteReady = true; });
   neapolitanChefSprite.addEventListener('error', () => { neapolitanChefSpriteReady = false; });
   neapolitanChefSprite.src = 'assets/neapolitan-chef-sprite-sheet-v2.png';
+  const chefMotionSprite = new Image();
+  let chefMotionSpriteReady = false;
+  chefMotionSprite.addEventListener('load', () => { chefMotionSpriteReady = true; });
+  chefMotionSprite.addEventListener('error', () => { chefMotionSpriteReady = false; });
+  chefMotionSprite.src = 'assets/normal-chef-motion-sheet-v1.png';
+  const neapolitanChefMotionSprite = new Image();
+  let neapolitanChefMotionSpriteReady = false;
+  neapolitanChefMotionSprite.addEventListener('load', () => { neapolitanChefMotionSpriteReady = true; });
+  neapolitanChefMotionSprite.addEventListener('error', () => { neapolitanChefMotionSpriteReady = false; });
+  neapolitanChefMotionSprite.src = 'assets/neapolitan-chef-motion-sheet-v1.png';
   const CHEF_PREP_STRIP_CELL = 512;
   const chefPrepSprite = new Image();
   let chefPrepSpriteReady = false;
@@ -2419,6 +2429,8 @@
   function drawChef(chef) {
     const sprite = chef.neapolitan ? neapolitanChefSprite : chefSprite;
     const spriteReady = chef.neapolitan ? neapolitanChefSpriteReady : chefSpriteReady;
+    const motionSprite = chef.neapolitan ? neapolitanChefMotionSprite : chefMotionSprite;
+    const motionSpriteReady = chef.neapolitan ? neapolitanChefMotionSpriteReady : chefMotionSpriteReady;
     const prepSprite = chef.neapolitan ? neapolitanChefPrepSprite : chefPrepSprite;
     const prepSpriteReady = chef.neapolitan ? neapolitanChefPrepSpriteReady : chefPrepSpriteReady;
     const carried = chef.hands.filter(Boolean);
@@ -2444,10 +2456,13 @@
       );
       ctx.restore();
     } else if (spriteReady) {
-      const row = carried.length ? 2 : chef.moving ? 1 : 0;
-      const frame = chef.moving
-        ? Math.floor(chef.walk * 0.8) % 4
-        : Math.floor(state.time * 1.5 + chef.id) % 4;
+      const useMotionSheet = motionSpriteReady && (chef.moving || carried.length);
+      const renderSprite = useMotionSheet ? motionSprite : sprite;
+      const row = useMotionSheet ? (carried.length ? 1 : 0) : carried.length ? 2 : chef.moving ? 1 : 0;
+      // Animation time is always finite; never let a stale entity walk value
+      // turn the source rectangle into NaN and leave only the shadow visible.
+      const animationTime = Number.isFinite(state.time) ? state.time : 0;
+      const frame = Math.floor(animationTime * (chef.moving ? 7 : 1.5) + chef.id) & 3;
       const size = 66;
       ctx.fillStyle = 'rgba(0,0,0,0.16)';
       ctx.beginPath(); ctx.ellipse(chef.x, chef.y + 13, 11, 3.5, 0, 0, 7); ctx.fill();
@@ -2455,7 +2470,7 @@
       ctx.translate(chef.x, 0);
       ctx.scale(chef.dir || 1, 1);
       ctx.drawImage(
-        sprite,
+        renderSprite,
         frame * CHEF_SPRITE_CELL,
         row * CHEF_SPRITE_CELL,
         CHEF_SPRITE_CELL,
