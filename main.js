@@ -221,7 +221,9 @@
   const ICE_CREAM = { x: 886, y: 304, w: 58, h: 78, use: { x: 864, y: 400 } };
   const TAKEAWAY_SPOTS = [
     { x: 80, y: 545, occupied: false, cust: null },
+    { x: 145, y: 545, occupied: false, cust: null },
     { x: 80, y: 585, occupied: false, cust: null },
+    { x: 145, y: 585, occupied: false, cust: null },
   ];
   const ENTRANCE = { x: 480, y: 612 };
   const CUSTOMER_QUEUE_SPOTS = [{ x: 540, y: 585 }, { x: 574, y: 585 }, { x: 608, y: 585 }];
@@ -1286,6 +1288,13 @@
     c.table = seat.table || null;
     c.state = 'entering';
   }
+  function rollNeapolitanOrder(c) {
+    if (!c || c.neapolitan || !progress.neapolitanStyle || Math.random() >= NEAPOLITAN_ORDER_CHANCE) return;
+    const chef = chooseNeapolitanChefForOrder(c.recipeId, c);
+    if (!chef) return;
+    c.neapolitan = true;
+    c.neapolitanChefId = chef.id;
+  }
   function spawnCustomer() {
     const takeaway = Math.random() < 0.33;
     const queue = queuedCustomers();
@@ -1311,12 +1320,10 @@
       queueElapsed: 0, queuePatience: rand(20, 25) * (hostActive ? 1.25 : 1),
       neapolitan: false, neapolitanChefId: null,
     };
-    const neapolitanChef = !!seat && progress.neapolitanStyle && Math.random() < NEAPOLITAN_ORDER_CHANCE
-      ? chooseNeapolitanChefForOrder(recipeId, c)
-      : null;
-    c.neapolitan = !!neapolitanChef;
-    c.neapolitanChefId = neapolitanChef ? neapolitanChef.id : null;
-    if (seat) seatCustomer(c, seat);
+    if (seat) {
+      seatCustomer(c, seat);
+      rollNeapolitanOrder(c);
+    }
     state.customers.push(c);
     return true;
   }
@@ -1328,6 +1335,7 @@
         const seat = c.takeaway ? freeTakeaway() : freeSeat();
         if (!seat) continue;
         seatCustomer(c, seat);
+        rollNeapolitanOrder(c);
         admitted = true;
         break;
       }
