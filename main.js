@@ -67,17 +67,19 @@
   playerSprite.addEventListener('load', () => { playerSpriteReady = true; });
   playerSprite.addEventListener('error', () => { playerSpriteReady = false; });
   playerSprite.src = 'assets/player-sprite-sheet-v2.png';
-  const CHEF_SPRITE_CELL = 313.5;
+  // Keep source cells on whole pixels. Fractional 313.5px crops intermittently
+  // dropped most of a frame in Chromium while chefs crossed the kitchen.
+  const CHEF_SPRITE_CELL = 313;
   const chefSprite = new Image();
   let chefSpriteReady = false;
   chefSprite.addEventListener('load', () => { chefSpriteReady = true; });
   chefSprite.addEventListener('error', () => { chefSpriteReady = false; });
-  chefSprite.src = 'assets/normal-chef-sprite-sheet-v1.png';
+  chefSprite.src = 'assets/normal-chef-sprite-sheet-v2.png';
   const neapolitanChefSprite = new Image();
   let neapolitanChefSpriteReady = false;
   neapolitanChefSprite.addEventListener('load', () => { neapolitanChefSpriteReady = true; });
   neapolitanChefSprite.addEventListener('error', () => { neapolitanChefSpriteReady = false; });
-  neapolitanChefSprite.src = 'assets/neapolitan-chef-sprite-sheet-v1.png';
+  neapolitanChefSprite.src = 'assets/neapolitan-chef-sprite-sheet-v2.png';
   const CHEF_PREP_STRIP_CELL = 512;
   const chefPrepSprite = new Image();
   let chefPrepSpriteReady = false;
@@ -207,7 +209,7 @@
   const CHEF_IDLE_SPOTS = [{ x: 180, y: 235 }, { x: 240, y: 235 }, { x: 300, y: 235 }, { x: 360, y: 235 }, { x: 420, y: 235 }];
   // These two points line up with the prep sprite's two dough circles.
   // Extra chefs wait for a free work surface instead of stacking beside it.
-  const CHEF_PREP_SPOTS = [{ x: 268, y: 204 }, { x: 336, y: 204 }];
+  const CHEF_PREP_SPOTS = [{ x: 268, y: 194 }, { x: 336, y: 194 }];
   const MAINTENANCE_IDLE = { x: 920, y: 580 };
 
   function overflowStaffSpot(spots, index, rowGap = 28) {
