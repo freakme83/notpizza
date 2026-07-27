@@ -78,6 +78,17 @@
   neapolitanChefSprite.addEventListener('load', () => { neapolitanChefSpriteReady = true; });
   neapolitanChefSprite.addEventListener('error', () => { neapolitanChefSpriteReady = false; });
   neapolitanChefSprite.src = 'assets/neapolitan-chef-sprite-sheet-v1.png';
+  const CHEF_PREP_STRIP_CELL = 512;
+  const chefPrepSprite = new Image();
+  let chefPrepSpriteReady = false;
+  chefPrepSprite.addEventListener('load', () => { chefPrepSpriteReady = true; });
+  chefPrepSprite.addEventListener('error', () => { chefPrepSpriteReady = false; });
+  chefPrepSprite.src = 'assets/normal-chef-prep-strip-v1.png';
+  const neapolitanChefPrepSprite = new Image();
+  let neapolitanChefPrepSpriteReady = false;
+  neapolitanChefPrepSprite.addEventListener('load', () => { neapolitanChefPrepSpriteReady = true; });
+  neapolitanChefPrepSprite.addEventListener('error', () => { neapolitanChefPrepSpriteReady = false; });
+  neapolitanChefPrepSprite.src = 'assets/neapolitan-chef-prep-strip-v1.png';
   const floorTiles = new Image();
   let floorTilesReady = false;
   floorTiles.addEventListener('load', () => { floorTilesReady = true; });
@@ -194,7 +205,9 @@
   const WAITER_IDLE_SPOTS = [{ x: 540, y: 250 }, { x: 600, y: 250 }, { x: 660, y: 250 }, { x: 720, y: 250 }];
   const RUNNER_IDLE_SPOTS = [{ x: 810, y: 270 }, { x: 810, y: 310 }, { x: 810, y: 350 }];
   const CHEF_IDLE_SPOTS = [{ x: 180, y: 235 }, { x: 240, y: 235 }, { x: 300, y: 235 }, { x: 360, y: 235 }, { x: 420, y: 235 }];
-  const CHEF_PREP_SPOTS = [{ x: 180, y: 182 }, { x: 240, y: 182 }, { x: 300, y: 182 }, { x: 360, y: 182 }, { x: 420, y: 182 }];
+  // These two points line up with the prep sprite's two dough circles.
+  // Extra chefs wait for a free work surface instead of stacking beside it.
+  const CHEF_PREP_SPOTS = [{ x: 268, y: 204 }, { x: 336, y: 204 }];
   const MAINTENANCE_IDLE = { x: 920, y: 580 };
 
   function overflowStaffSpot(spots, index, rowGap = 28) {
@@ -210,13 +223,15 @@
     return { x: oven().cx + (slotIndex - (count - 1) / 2) * spacing, y: oven().use.y };
   }
   function claimChefPrepSpot(chef) {
-    if (chef.prepSpot >= 0) return;
+    if (chef.prepSpot >= 0) return true;
     const used = new Set(state.chefs.filter((other) => other !== chef && other.prepSpot >= 0).map((other) => other.prepSpot));
     let index = 0;
-    while (used.has(index)) index++;
+    while (index < CHEF_PREP_SPOTS.length && used.has(index)) index++;
+    if (index >= CHEF_PREP_SPOTS.length) return false;
     chef.prepSpot = index;
+    return true;
   }
-  const chefPrepPoint = (chef) => overflowStaffSpot(CHEF_PREP_SPOTS, Math.max(0, chef.prepSpot), 28);
+  const chefPrepPoint = (chef) => CHEF_PREP_SPOTS[Math.max(0, chef.prepSpot)];
   function stationWorkPoint(station, w) {
     const offsets = [-22, 0, 22];
     return { x: station.use.x - 12, y: station.use.y + offsets[w.roleSlot % offsets.length] };
@@ -1907,7 +1922,16 @@
       if (chef.action.elapsed >= chef.action.duration) { const cb = chef.action.onComplete; chef.action = null; chef.prepSpot = -1; chef.state = 'seekwork'; cb && cb(); }
       return;
     }
-    if (chef.state === 'toprep') { claimChefPrepSpot(chef); const work = chefPrepPoint(chef); if (moveEntity(chef, work.x, work.y, dt)) startChefPrep(chef); return; }
+    if (chef.state === 'toprep') {
+      if (!claimChefPrepSpot(chef)) {
+        const idle = chefIdlePoint(chef);
+        moveEntity(chef, idle.x, idle.y, dt);
+        return;
+      }
+      const work = chefPrepPoint(chef);
+      if (moveEntity(chef, work.x, work.y, dt)) startChefPrep(chef);
+      return;
+    }
     if (chef.state === 'tooven') { const work = ovenWorkPoint(chef.targetSlot); if (moveEntity(chef, work.x, work.y, dt)) { placeChefPizza(chef); chef.state = 'seekwork'; } return; }
     if (chef.state === 'seekwork') { chefNext(chef); if (chef.state === 'seekwork') { const idle = chefIdlePoint(chef); moveEntity(chef, idle.x, idle.y, dt); } return; }
   }
@@ -2393,14 +2417,35 @@
   function drawChef(chef) {
     const sprite = chef.neapolitan ? neapolitanChefSprite : chefSprite;
     const spriteReady = chef.neapolitan ? neapolitanChefSpriteReady : chefSpriteReady;
+    const prepSprite = chef.neapolitan ? neapolitanChefPrepSprite : chefPrepSprite;
+    const prepSpriteReady = chef.neapolitan ? neapolitanChefPrepSpriteReady : chefPrepSpriteReady;
     const carried = chef.hands.filter(Boolean);
-    if (spriteReady) {
-      const row = chef.action ? 3 : carried.length ? 2 : chef.moving ? 1 : 0;
+    if (chef.action && prepSpriteReady) {
+      const frame = Math.floor(chef.action.elapsed * 3) % 4;
+      const size = 66;
+      const direction = chef.prepSpot === 1 ? -1 : 1;
+      ctx.fillStyle = 'rgba(0,0,0,0.14)';
+      ctx.beginPath(); ctx.ellipse(chef.x, chef.y + 10, 10, 3, 0, 0, 7); ctx.fill();
+      ctx.save();
+      ctx.translate(chef.x, 0);
+      ctx.scale(direction, 1);
+      ctx.drawImage(
+        prepSprite,
+        frame * CHEF_PREP_STRIP_CELL,
+        0,
+        CHEF_PREP_STRIP_CELL,
+        CHEF_PREP_STRIP_CELL,
+        -size / 2,
+        chef.y - 53,
+        size,
+        size
+      );
+      ctx.restore();
+    } else if (spriteReady) {
+      const row = carried.length ? 2 : chef.moving ? 1 : 0;
       const frame = chef.moving
         ? Math.floor(chef.walk * 0.8) % 4
-        : chef.action
-          ? Math.floor(chef.action.elapsed * 3) % 4
-          : Math.floor(state.time * 1.5 + chef.id) % 4;
+        : Math.floor(state.time * 1.5 + chef.id) % 4;
       const size = 66;
       ctx.fillStyle = 'rgba(0,0,0,0.16)';
       ctx.beginPath(); ctx.ellipse(chef.x, chef.y + 13, 11, 3.5, 0, 0, 7); ctx.fill();
@@ -2434,7 +2479,7 @@
     carried.forEach((h, i) => { const off = carried.length === 1 ? 0 : i === 0 ? -9 : 9; const cx = chef.x + off, cy = chef.y - 26; ctx.fillStyle = C.tray; roundRect(cx - 10, cy - 3, 20, 6, 3); ctx.fill(); if (h.t === 'pizza') drawPizza(cx, cy - 6, pizzaStage(h.pz), 0.8); });
     }
     if (chef.action) {
-      const pct = chef.action.elapsed / chef.action.duration, bw = 52, bx = chef.x - bw / 2, by = chef.y - (spriteReady ? 59 : 44);
+      const pct = chef.action.elapsed / chef.action.duration, bw = 52, bx = chef.x - bw / 2, by = chef.y - ((prepSpriteReady || spriteReady) ? 62 : 44);
       ctx.fillStyle = 'rgba(0,0,0,0.55)'; roundRect(bx - 2, by - 2, bw + 4, 12, 6); ctx.fill();
       ctx.fillStyle = C.good; roundRect(bx, by, bw * pct, 8, 4); ctx.fill();
       ctx.font = "700 11px 'Inter', sans-serif"; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
