@@ -1960,12 +1960,12 @@
     const layout = { sx: 39, sy: 98, sw: 690, sh: 341, dw: 220, dh: 108, x: station.cx - 110, y: 88 };
     ctx.drawImage(prepSprite, layout.sx, layout.sy, layout.sw, layout.sh, layout.x, layout.y, layout.dw, layout.dh);
     const socketRects = [
-      { x: 122, y: 119, w: 94, h: 40 },
-      { x: 226, y: 119, w: 92, h: 40 },
-      { x: 330, y: 119, w: 92, h: 40 },
-      { x: 433, y: 119, w: 91, h: 40 },
-      { x: 535, y: 119, w: 91, h: 40 },
-      { x: 638, y: 119, w: 90, h: 40 },
+      { x: 125, y: 123, w: 67, h: 30 },
+      { x: 215, y: 123, w: 67, h: 30 },
+      { x: 305, y: 123, w: 67, h: 30 },
+      { x: 395, y: 123, w: 67, h: 30 },
+      { x: 485, y: 123, w: 67, h: 30 },
+      { x: 575, y: 123, w: 67, h: 30 },
     ];
     const available = new Set(availableIngredients().map((ingredient) => ingredient.id));
     INGREDIENTS.forEach((ingredient, index) => {
@@ -1975,7 +1975,7 @@
       const dy = layout.y + ((socket.y - layout.sy) / layout.sh) * layout.dh;
       const dw = (socket.w / layout.sw) * layout.dw;
       const dh = (socket.h / layout.sh) * layout.dh;
-      const inset = 1.5;
+      const inset = 0.75;
       ctx.drawImage(prepIngredientsSprite, index * 96 + 8, 9, 80, 30, dx + inset, dy + inset, dw - inset * 2, dh - inset * 2);
     });
     if (inStationRange(state.player, station)) {
