@@ -13,6 +13,12 @@
     />
     <link rel="stylesheet" href="styles.css" />
     <link rel="preload" href="assets/player-sprite-sheet-v2.png" as="image" type="image/png" />
+    <link rel="preload" href="assets/normal-chef-sprite-sheet-v2.png" as="image" type="image/png" />
+    <link rel="preload" href="assets/neapolitan-chef-sprite-sheet-v2.png" as="image" type="image/png" />
+    <link rel="preload" href="assets/normal-chef-motion-sheet-v1.png" as="image" type="image/png" />
+    <link rel="preload" href="assets/neapolitan-chef-motion-sheet-v1.png" as="image" type="image/png" />
+    <link rel="preload" href="assets/normal-chef-prep-strip-v1.png" as="image" type="image/png" />
+    <link rel="preload" href="assets/neapolitan-chef-prep-strip-v1.png" as="image" type="image/png" />
     <link rel="preload" href="assets/floor-tiles-v1.png" as="image" type="image/png" />
     <link rel="preload" href="assets/jukebox-sprite-v1.png" as="image" type="image/png" />
     <link rel="preload" href="assets/oven-sprite-sheet-v1.png" as="image" type="image/png" />
@@ -48,6 +54,7 @@
           <button class="office-tab active" type="button" role="tab" aria-selected="true" data-office-tab="upgrades">Permanent upgrades</button>
           <button class="office-tab" type="button" role="tab" aria-selected="false" data-office-tab="hires">Hires</button>
           <button class="office-tab" type="button" role="tab" aria-selected="false" data-office-tab="menu">Menu</button>
+          <button class="office-tab" type="button" role="tab" aria-selected="false" data-office-tab="bank">Bank</button>
         </div>
 
         <section class="office-pane active" data-office-pane="upgrades" role="tabpanel">
@@ -63,6 +70,7 @@
             <button id="sundaeSpeedUpgrade" class="option-card accent-mint" type="button"><strong>Faster Sundae</strong><span>Requires ice cream cabinet</span></button>
             <button id="milkshakeUnlock" class="option-card accent-pink" type="button"><strong>Milkshake</strong><span>Requires ice cream cabinet</span></button>
             <button id="milkshakeSpeedUpgrade" class="option-card accent-pink" type="button"><strong>Faster Milkshake</strong><span>Requires Milkshake</span></button>
+            <button id="neapolitanStyleUpgrade" class="option-card accent-mint" type="button"><strong>Neapolitan Style</strong><span>30% premium order chance with specialist · $250</span></button>
           </div>
         </section>
 
@@ -73,6 +81,7 @@
             <button class="option-card accent-purple" data-type="normal" type="button"><strong>Waiter</strong><span>$20</span><em class="hire-active">None active</em></button>
             <button class="option-card accent-cyan" data-type="fast" type="button"><strong>Fast waiter</strong><span>$25</span><em class="hire-active">None active</em></button>
             <button class="option-card accent-red" data-type="chef" type="button"><strong>Chef</strong><span>$80</span><em class="hire-active">None active</em></button>
+            <button class="option-card accent-mint" data-type="neapolitan" type="button"><strong>Neapolitan chef</strong><span>Requires Neapolitan Style</span><em class="hire-active">None active</em></button>
             <button class="option-card accent-blue" data-type="drinks" type="button"><strong>Drinks runner</strong><span>$25</span><em class="hire-active">None active</em></button>
             <button class="option-card accent-orange" data-type="host" type="button"><strong>Host</strong><span>$30</span><em class="hire-active">None active</em></button>
             <button class="option-card accent-mint" data-type="maintenance" type="button"><strong>Maintenance tech</strong><span>$40</span><em class="hire-active">None active</em></button>
@@ -88,6 +97,33 @@
             <button class="option-card recipe-choice accent-purple" data-recipe="funghi" type="button">Unlock Funghi</button>
             <button class="option-card recipe-choice accent-mint" data-recipe="zucchini" type="button">Unlock Zucchini</button>
           </div>
+        </section>
+
+        <section class="office-pane" data-office-pane="bank" role="tabpanel">
+          <div class="bank-dashboard">
+            <div class="bank-stat"><span>Credit limit</span><strong id="bankCreditLimit">$200</strong></div>
+            <div class="bank-stat"><span>Available credit</span><strong id="bankAvailableCredit">$200</strong></div>
+            <div class="bank-stat"><span>Outstanding debt</span><strong id="bankOutstandingDebt">$0</strong></div>
+            <div class="bank-stat"><span>Next instalment</span><strong id="bankNextPayment">—</strong></div>
+          </div>
+          <div class="bank-borrow-card">
+            <div class="bank-card-heading">
+              <div><strong>Business credit line</strong><span>Four instalments · one payment every 3 minutes</span></div>
+              <strong id="bankBorrowAmount">$50</strong>
+            </div>
+            <input id="bankBorrowRange" type="range" min="50" max="200" step="50" value="50" aria-label="Loan amount" />
+            <div class="bank-borrow-summary">
+              <span id="bankInterestSummary">Total repayment: $60</span>
+              <button id="bankBorrowBtn" class="bank-primary" type="button">Borrow $50</button>
+            </div>
+          </div>
+          <div id="bankStatus" class="bank-status" aria-live="polite">No active loan.</div>
+          <div id="bankSeizedAssets" class="bank-seized-assets hidden"></div>
+          <div class="bank-actions">
+            <button id="bankPayOverdueBtn" class="confirm-cancel" type="button">Pay overdue instalment</button>
+            <button id="bankRepayAllBtn" class="staff-rehire" type="button">Repay all debt</button>
+          </div>
+          <p class="report-note">First missed payment adds a 10% late fee and grants 3 more minutes. A second consecutive miss triggers a bank lien. Core equipment can never be seized.</p>
         </section>
 
         <div id="staffNotice" class="staff-notice hidden" role="alertdialog" aria-modal="true" aria-labelledby="staffNoticeText">
@@ -122,6 +158,7 @@
           <div class="confirm-actions service-actions">
             <button id="regularServiceBtn" class="confirm-cancel" type="button">Regular · $25 · 60s</button>
             <button id="fastServiceBtn" class="staff-rehire" type="button">Fast · $45 · 30s</button>
+            <button id="maintenanceServiceBtn" class="maintenance-service hidden" type="button">Let maintenance take care of it · 45s</button>
           </div>
         </div>
       </div>
@@ -156,6 +193,6 @@
         <span>click to start</span>
       </div>
     </div>
-  <script src="main.js?v=physical-seat-queue"></script>
+  <script src="main.js?v=finish-before-clockout-v1"></script>
   </body>
 </html>
