@@ -58,6 +58,18 @@
   const milkshakeUnlockBtn = document.getElementById('milkshakeUnlock');
   const milkshakeSpeedUpgradeBtn = document.getElementById('milkshakeSpeedUpgrade');
   const neapolitanStyleUpgradeBtn = document.getElementById('neapolitanStyleUpgrade');
+  const bankCreditLimit = document.getElementById('bankCreditLimit');
+  const bankAvailableCredit = document.getElementById('bankAvailableCredit');
+  const bankOutstandingDebt = document.getElementById('bankOutstandingDebt');
+  const bankNextPayment = document.getElementById('bankNextPayment');
+  const bankBorrowAmount = document.getElementById('bankBorrowAmount');
+  const bankBorrowRange = document.getElementById('bankBorrowRange');
+  const bankInterestSummary = document.getElementById('bankInterestSummary');
+  const bankBorrowBtn = document.getElementById('bankBorrowBtn');
+  const bankStatus = document.getElementById('bankStatus');
+  const bankSeizedAssets = document.getElementById('bankSeizedAssets');
+  const bankPayOverdueBtn = document.getElementById('bankPayOverdueBtn');
+  const bankRepayAllBtn = document.getElementById('bankRepayAllBtn');
   const nextShiftBtn = document.getElementById('nextShiftBtn');
   const recipeButtons = [...document.querySelectorAll('.recipe-choice')];
   const W = 960, H = 620;
@@ -262,6 +274,13 @@
     iceCreamCabinet: false, milkshakeUnlocked: false, sundaeFast: false, milkshakeFast: false,
     unlockedRecipes: new Set(['margherita']),
   };
+  const BANK_PAYMENT_INTERVAL = 180;
+  const BANK_INSTALLMENTS = 4;
+  const bank = {
+    principalUsed: 0, debt: 0, installmentsRemaining: 0, nextPaymentIn: 0,
+    missedPayments: 0, overdueAmount: 0, seized: new Set(), pendingSeizure: false,
+    status: 'No active loan.',
+  };
   const shift = {
     elapsed: 0, showingReport: false, shoppingStartCash: 0,
     reputation: 50, reputationRemainder: 0, peakReputation: 50, lowRepTimer: 0, lostStreak: 0,
@@ -273,7 +292,7 @@
   let hostActive = false, hostTimer = 0;
   let maintenanceTech = null, pendingBreakdown = null, jukeboxWearTimer = 0;
   function makeEquipment(id, label, kind, safeUses, criticalUses) {
-    return { id, label, kind, safeUses, criticalUses, uses: 0, broken: false, serviceTimer: 0, maintenanceReserved: false };
+    return { id, label, kind, safeUses, criticalUses, uses: 0, broken: false, serviceTimer: 0, maintenanceReserved: false, seized: false };
   }
   const equipment = {
     ovens: [
@@ -291,7 +310,7 @@
     const ratio = clamp((item.uses - item.safeUses) / Math.max(1, item.criticalUses - item.safeUses), 0, 1);
     return 0.12 * ratio * ratio;
   }
-  const equipmentUnavailable = (item) => !item || item.broken || item.serviceTimer > 0 || item.maintenanceReserved;
+  const equipmentUnavailable = (item) => !item || item.broken || item.serviceTimer > 0 || item.maintenanceReserved || item.seized;
   const jukeboxWorking = () => progress.jukebox && !equipmentUnavailable(equipment.jukebox);
   let officeHintShown = false, officeNoticeTimer = null;
   const unlockedRecipeIds = () => [...progress.unlockedRecipes];
@@ -318,11 +337,202 @@
   const activeOvenSlots = (ov = oven()) => ov.slots.slice(0, progress.ovenSlots);
   const OVEN_SLOT_COSTS = { 2: 100, 3: 400 };
   const OVEN_TRAFFIC_MULTIPLIERS = { 1: 1.25, 2: 1, 3: 0.85 };
-  const activeTables = () => TABLES.slice(0, progress.tableCount);
+  const ownedTables = () => TABLES.slice(0, progress.tableCount);
+  const activeTables = () => ownedTables().filter((table) => table !== TABLES[2] || !bank.seized.has('table-3'));
   const dessertDuration = (id) => (id === 'sundae' ? progress.sundaeFast : progress.milkshakeFast) ? 2 : 3;
-  const availableDessertIds = () => progress.iceCreamCabinet ? ['sundae'].concat(progress.milkshakeUnlocked ? ['milkshake'] : []) : [];
+  const availableDessertIds = () => progress.iceCreamCabinet && !equipmentUnavailable(equipment.iceCream)
+    ? ['sundae'].concat(progress.milkshakeUnlocked ? ['milkshake'] : [])
+    : [];
   const discountedStaffCost = (baseCost) => Math.max(1, Math.round(baseCost * (1 - progress.staffDiscountLevel * 0.1)));
   const money = (value) => String.fromCharCode(36) + Math.round(value);
+  const bankCreditLimitValue = () => progress.ovenSlots * 200;
+  const bankAvailableCreditValue = () => Math.max(0, Math.floor((bankCreditLimitValue() - bank.principalUsed) / 50) * 50);
+  function bankRepaymentForPrincipal(principal) {
+    const standard = Math.min(400, principal);
+    const premium = Math.max(0, principal - 400);
+    return Math.round(principal + standard * 0.2 + premium * 0.25);
+  }
+  const bankInstallmentDue = () => bank.overdueAmount || (bank.installmentsRemaining > 0 ? Math.ceil(bank.debt / bank.installmentsRemaining) : 0);
+  const bankAssetLabels = {
+    'oven-3': 'Oven slot 3', 'oven-2': 'Oven slot 2', jukebox: 'Jukebox',
+    soda: 'Soda cabinet', 'ice-cream': 'Ice cream station', 'table-3': 'Table 3',
+  };
+  function formatBankTime(seconds) {
+    const safe = Math.max(0, Math.ceil(seconds));
+    return Math.floor(safe / 60) + ':' + String(safe % 60).padStart(2, '0');
+  }
+  function cancelOptionalOrders(kind) {
+    state.customers.forEach((customer) => {
+      if (customer.remove || customer.state === 'leaving') return;
+      if (kind === 'drink' && customer.orderedDrink && !customer.drinkDelivered) {
+        customer.drinkClaimedBy = null;
+        customer.drinkId = null;
+        customer.orderedDrink = false;
+      }
+      if (kind === 'dessert' && customer.orderedDessert && !customer.dessertDelivered) {
+        customer.dessertClaimedBy = null;
+        customer.dessertId = null;
+        customer.orderedDessert = false;
+        customer.dessertDecisionMade = true;
+      }
+    });
+  }
+  function bankAssetCandidates() {
+    return [
+      progress.ovenSlots >= 3 ? equipment.ovens[2] : null,
+      progress.ovenSlots >= 2 ? equipment.ovens[1] : null,
+      progress.jukebox ? equipment.jukebox : null,
+      progress.sodaCabinet ? equipment.soda : null,
+      progress.iceCreamCabinet ? equipment.iceCream : null,
+      progress.tableCount >= 3 ? 'table-3' : null,
+    ].filter(Boolean).filter((asset) => !bank.seized.has(typeof asset === 'string' ? asset : asset.id));
+  }
+  function bankAssetIdle(asset) {
+    if (asset === 'table-3') return TABLES[2].seats.every((seat) => !seat.occupied);
+    return equipmentIdle(asset);
+  }
+  function applyBankLien() {
+    const asset = bankAssetCandidates().find(bankAssetIdle);
+    if (!asset) {
+      bank.pendingSeizure = bankAssetCandidates().length > 0;
+      if (!bank.pendingSeizure) {
+        bank.status = 'Insolvent: no eligible assets remain.';
+        showGameOver();
+      }
+      return false;
+    }
+    const id = typeof asset === 'string' ? asset : asset.id;
+    bank.seized.add(id);
+    bank.pendingSeizure = false;
+    if (typeof asset !== 'string') {
+      asset.seized = true;
+      asset.maintenanceReserved = false;
+    }
+    if (id === 'soda') cancelOptionalOrders('drink');
+    if (id === 'ice-cream') cancelOptionalOrders('dessert');
+    bank.status = bankAssetLabels[id] + ' was seized after a missed payment.';
+    return true;
+  }
+  function releaseOneBankLien() {
+    const ids = [...bank.seized];
+    const id = ids[ids.length - 1];
+    if (!id) return;
+    bank.seized.delete(id);
+    const item = allEquipment().find((candidate) => candidate.id === id);
+    if (item) item.seized = false;
+  }
+  function releaseAllBankLiens() {
+    [...bank.seized].forEach(() => releaseOneBankLien());
+  }
+  function reduceBankBalance(amount, scheduledPayment = false) {
+    const paid = Math.min(bank.debt, Math.max(0, amount));
+    if (!paid) return;
+    const oldDebt = bank.debt;
+    bank.principalUsed = Math.max(0, bank.principalUsed * (1 - paid / oldDebt));
+    bank.debt = Math.max(0, oldDebt - paid);
+    bank.overdueAmount = 0;
+    bank.missedPayments = 0;
+    bank.pendingSeizure = false;
+    if (scheduledPayment) bank.installmentsRemaining = Math.max(0, bank.installmentsRemaining - 1);
+    if (bank.seized.size) releaseOneBankLien();
+    if (bank.debt < 0.5 || bank.installmentsRemaining <= 0) {
+      bank.debt = 0; bank.principalUsed = 0; bank.installmentsRemaining = 0; bank.nextPaymentIn = 0;
+      releaseAllBankLiens();
+      bank.status = 'Loan fully repaid.';
+    } else {
+      bank.nextPaymentIn = BANK_PAYMENT_INTERVAL;
+      bank.status = 'Payment received. Next installment scheduled.';
+    }
+  }
+  function processBankPaymentDue() {
+    if (bank.debt <= 0) return;
+    const due = bankInstallmentDue();
+    if (state.cash >= due) {
+      state.cash -= due;
+      reduceBankBalance(due, true);
+      return;
+    }
+    if (bank.missedPayments === 0) {
+      const lateFee = Math.ceil(due * 0.1);
+      bank.debt += lateFee;
+      bank.overdueAmount = due + lateFee;
+      bank.missedPayments = 1;
+      bank.nextPaymentIn = BANK_PAYMENT_INTERVAL;
+      bank.status = 'Payment missed. ' + money(lateFee) + ' late fee added; 3-minute grace period started.';
+    } else {
+      bank.missedPayments += 1;
+      applyBankLien();
+      bank.nextPaymentIn = BANK_PAYMENT_INTERVAL;
+    }
+  }
+  function updateBank(dt) {
+    if (bank.pendingSeizure) applyBankLien();
+    if (bank.debt <= 0) return;
+    bank.nextPaymentIn -= dt;
+    if (bank.nextPaymentIn <= 0) processBankPaymentDue();
+  }
+  function borrowFromBank() {
+    const amount = Number(bankBorrowRange.value);
+    if (bank.overdueAmount > 0 || amount < 50 || amount > bankAvailableCreditValue()) return;
+    const oldRepayment = bankRepaymentForPrincipal(bank.principalUsed);
+    bank.principalUsed += amount;
+    bank.debt += bankRepaymentForPrincipal(bank.principalUsed) - oldRepayment;
+    state.cash += amount;
+    if (!bank.installmentsRemaining) {
+      bank.installmentsRemaining = BANK_INSTALLMENTS;
+      bank.nextPaymentIn = BANK_PAYMENT_INTERVAL;
+    }
+    bank.status = money(amount) + ' deposited. Automatic payments run every 3 minutes.';
+    refreshReportOptions();
+  }
+  function payBankOverdue() {
+    const due = bankInstallmentDue();
+    if (!bank.overdueAmount || state.cash < due) return;
+    state.cash -= due;
+    reduceBankBalance(due, true);
+    refreshReportOptions();
+  }
+  function repayBankInFull() {
+    const due = Math.ceil(bank.debt);
+    if (!due || state.cash < due) return;
+    state.cash -= due;
+    reduceBankBalance(bank.debt, false);
+    refreshReportOptions();
+  }
+  function refreshBankUI() {
+    if (!bankCreditLimit) return;
+    const limit = bankCreditLimitValue();
+    const available = bankAvailableCreditValue();
+    const selected = available >= 50 ? Math.min(available, Math.max(50, Number(bankBorrowRange.value) || 50)) : 0;
+    bankCreditLimit.textContent = money(limit);
+    bankAvailableCredit.textContent = money(available);
+    bankOutstandingDebt.textContent = money(bank.debt);
+    bankNextPayment.textContent = bank.debt > 0
+      ? money(bankInstallmentDue()) + ' in ' + formatBankTime(bank.nextPaymentIn)
+      : '—';
+    bankBorrowRange.max = String(Math.max(50, available));
+    bankBorrowRange.value = String(Math.max(50, selected));
+    bankBorrowRange.disabled = available < 50 || bank.overdueAmount > 0;
+    bankBorrowAmount.textContent = available >= 50 ? money(selected) : money(0);
+    const addedDebt = available >= 50
+      ? bankRepaymentForPrincipal(bank.principalUsed + selected) - bankRepaymentForPrincipal(bank.principalUsed)
+      : 0;
+    bankInterestSummary.textContent = available >= 50
+      ? 'This draw adds ' + money(addedDebt) + ' to the balance, including interest.'
+      : 'Upgrade oven capacity or repay principal to restore available credit.';
+    bankBorrowBtn.disabled = available < 50 || bank.overdueAmount > 0;
+    bankBorrowBtn.textContent = available >= 50 ? 'Borrow ' + money(selected) : 'No credit available';
+    bankStatus.textContent = bank.status;
+    bankStatus.classList.toggle('warning', bank.missedPayments > 0 || bank.seized.size > 0);
+    bankSeizedAssets.textContent = bank.seized.size
+      ? [...bank.seized].map((id) => bankAssetLabels[id]).join(', ')
+      : 'None';
+    bankSeizedAssets.classList.toggle('hidden', bank.seized.size === 0);
+    bankPayOverdueBtn.disabled = !bank.overdueAmount || state.cash < bankInstallmentDue();
+    bankPayOverdueBtn.textContent = bank.overdueAmount ? 'Pay overdue · ' + money(bankInstallmentDue()) : 'No overdue payment';
+    bankRepayAllBtn.disabled = bank.debt <= 0 || state.cash < Math.ceil(bank.debt);
+    bankRepayAllBtn.textContent = bank.debt > 0 ? 'Repay all · ' + money(bank.debt) : 'No balance';
+  }
   const clampReputation = (value) => clamp(Math.round(value), 0, 100);
   function changeReputation(delta) {
     if (!delta || shift.showingReport) return;
@@ -1083,7 +1293,9 @@
     const recipeIds = unlockedRecipeIds();
     const recipeId = recipeIds[(Math.random() * recipeIds.length) | 0];
     const drinkIds = Object.keys(DRINKS);
-    const drinkId = progress.sodaCabinet && Math.random() < 0.5 ? drinkIds[(Math.random() * drinkIds.length) | 0] : null;
+    const drinkId = progress.sodaCabinet && !equipmentUnavailable(equipment.soda) && Math.random() < 0.5
+      ? drinkIds[(Math.random() * drinkIds.length) | 0]
+      : null;
     const c = {
       id: Math.random(), recipeId, x: ENTRANCE.x, y: ENTRANCE.y, tx: ENTRANCE.x, ty: ENTRANCE.y,
       seat: null, takeaway, side: 'n', table: null, state: seat ? 'entering' : 'queued',
@@ -1180,7 +1392,7 @@
   function segmentClearOfTables(ax, ay, bx, by, entity) {
     const vx = bx - ax, vy = by - ay;
     const lengthSq = vx * vx + vy * vy;
-    for (const table of activeTables()) {
+    for (const table of ownedTables()) {
       const radius = table.r + entity.r + 1;
       const projection = lengthSq > 0 ? clamp(((table.x - ax) * vx + (table.y - ay) * vy) / lengthSq, 0, 1) : 0;
       const closestX = ax + vx * projection, closestY = ay + vy * projection;
@@ -1194,7 +1406,7 @@
     if (segmentClearOfTables(start.x, start.y, tx, ty, entity)) return [target];
 
     const nodes = [start, target];
-    for (const table of activeTables()) {
+    for (const table of ownedTables()) {
       const radius = table.r + entity.r + 13;
       for (let i = 0; i < 12; i++) {
         const angle = (Math.PI * 2 * i) / 12;
@@ -1202,7 +1414,7 @@
           x: clamp(table.x + Math.cos(angle) * radius, 28, W - 28),
           y: clamp(table.y + Math.sin(angle) * radius, 180, H - 18),
         };
-        const blocked = activeTables().some((other) => dist(point.x, point.y, other.x, other.y) < other.r + entity.r + 1);
+        const blocked = ownedTables().some((other) => dist(point.x, point.y, other.x, other.y) < other.r + entity.r + 1);
         if (!blocked) nodes.push(point);
       }
     }
@@ -1250,7 +1462,7 @@
     if (Math.abs(dx) > 0.5) e.dir = dx < 0 ? -1 : 1;
     let nx = e.x + (dx / d) * step, ny = e.y + (dy / d) * step;
     nx = clamp(nx, 28, W - 28); ny = clamp(ny, 180, H - 18);
-    for (const t of activeTables()) {
+    for (const t of ownedTables()) {
       const dd = dist(nx, ny, t.x, t.y), min = t.r + e.r - 2;
       if (dd < min && dd > 0) { const a = Math.atan2(ny - t.y, nx - t.x); nx = t.x + Math.cos(a) * min; ny = t.y + Math.sin(a) * min; }
     }
@@ -1329,7 +1541,7 @@
     return { x: 870, y: 500 };
   }
   function chooseMaintenanceTarget() {
-    const available = allEquipment().filter((item) => item.serviceTimer <= 0 && !item.maintenanceReserved);
+    const available = allEquipment().filter((item) => item.serviceTimer <= 0 && !item.maintenanceReserved && !item.seized);
     const broken = available
       .filter((item) => item.broken)
       .sort((a, b) => maintenancePriority(a) - maintenancePriority(b))[0];
@@ -2201,10 +2413,15 @@
   }
   // Vector fallback placeholder: replace this function with table sprites without changing game state.
   function drawTables() {
-    for (const t of activeTables()) {
+    for (const t of ownedTables()) {
+      const seized = t === TABLES[2] && bank.seized.has('table-3');
+      ctx.save();
+      if (seized) ctx.globalAlpha = 0.35;
       for (const s of t.seats) { ctx.fillStyle = s.occupied ? '#6b3f2c' : C.chair; roundRect(s.x - 11, s.y - 11, 22, 22, 5); ctx.fill(); }
       ctx.fillStyle = C.table; ctx.beginPath(); ctx.arc(t.x, t.y, t.r, 0, 7); ctx.fill();
       ctx.fillStyle = C.tableTop; ctx.beginPath(); ctx.arc(t.x, t.y, t.r - 6, 0, 7); ctx.fill();
+      ctx.restore();
+      if (seized) drawBankLienLabel(t.x, t.y);
     }
   }
   function drawPickup() {
@@ -2262,10 +2479,18 @@
   }
   function drawEquipmentStatus(item, x, y) {
     if (!equipmentUnavailable(item)) return;
-    const text = item.serviceTimer > 0 ? 'REPAIR ' + Math.ceil(item.serviceTimer) + 's' : item.maintenanceReserved ? 'MAINTENANCE' : 'BROKEN';
+    const text = item.seized ? 'SEIZED · BANK' : item.serviceTimer > 0 ? 'REPAIR ' + Math.ceil(item.serviceTimer) + 's' : item.maintenanceReserved ? 'MAINTENANCE' : 'BROKEN';
     ctx.font = "900 9px 'Inter', sans-serif"; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     const width = ctx.measureText(text).width + 12;
-    ctx.fillStyle = item.broken ? 'rgba(199,54,61,0.94)' : 'rgba(39,126,112,0.94)';
+    ctx.fillStyle = item.seized ? 'rgba(52,42,65,0.96)' : item.broken ? 'rgba(199,54,61,0.94)' : 'rgba(39,126,112,0.94)';
+    roundRect(x - width / 2, y - 8, width, 16, 6); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.fillText(text, x, y);
+  }
+  function drawBankLienLabel(x, y) {
+    const text = 'SEIZED · BANK';
+    ctx.font = "900 9px 'Inter', sans-serif"; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    const width = ctx.measureText(text).width + 12;
+    ctx.fillStyle = 'rgba(52,42,65,0.96)';
     roundRect(x - width / 2, y - 8, width, 16, 6); ctx.fill();
     ctx.fillStyle = '#fff'; ctx.fillText(text, x, y);
   }
@@ -2741,7 +2966,12 @@
       button.setAttribute('aria-selected', String(active));
     });
     officePanes.forEach((pane) => pane.classList.toggle('active', pane.dataset.officePane === target));
+    if (target === 'bank') refreshBankUI();
   }));
+  if (bankBorrowRange) bankBorrowRange.addEventListener('input', refreshBankUI);
+  if (bankBorrowBtn) bankBorrowBtn.addEventListener('click', borrowFromBank);
+  if (bankPayOverdueBtn) bankPayOverdueBtn.addEventListener('click', payBankOverdue);
+  if (bankRepayAllBtn) bankRepayAllBtn.addEventListener('click', repayBankInFull);
 
 
   /* ---------- endless chaos, reputation and upgrades ---------- */
@@ -2761,6 +2991,7 @@
   function activeCustomerCount() { return insideCustomerCount(); }
   function updateChaos(dt) {
     shift.elapsed += dt;
+    updateBank(dt);
     shift.repFlashTimer = Math.max(0, shift.repFlashTimer - dt);
     state.cheatFlashTimer = Math.max(0, state.cheatFlashTimer - dt);
     if (state.trafficRampRemaining > 0) {
@@ -2865,6 +3096,7 @@
     milkshakeUnlockBtn.querySelector('span').textContent = progress.milkshakeUnlocked ? 'Purchased · Sells for $6' : progress.iceCreamCabinet ? 'Unlock Milkshake · $100' : 'Requires ice cream cabinet';
     milkshakeSpeedUpgradeBtn.querySelector('span').textContent = progress.milkshakeFast ? 'Purchased · Prep time 2s' : progress.milkshakeUnlocked ? 'Prep time 3s → 2s · $120' : 'Requires Milkshake';
     neapolitanStyleUpgradeBtn.querySelector('span').textContent = progress.neapolitanStyle ? 'Purchased · 30% premium order chance with specialist' : 'Unlock premium orders · ' + money(NEAPOLITAN_STYLE_COST);
+    refreshBankUI();
     recipeButtons.forEach((button) => {
       const id = button.dataset.recipe, unlocked = progress.unlockedRecipes.has(id);
       const cost = RECIPES[id].unlockCost || 0;

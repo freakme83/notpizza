@@ -54,6 +54,7 @@
           <button class="office-tab active" type="button" role="tab" aria-selected="true" data-office-tab="upgrades">Permanent upgrades</button>
           <button class="office-tab" type="button" role="tab" aria-selected="false" data-office-tab="hires">Hires</button>
           <button class="office-tab" type="button" role="tab" aria-selected="false" data-office-tab="menu">Menu</button>
+          <button class="office-tab" type="button" role="tab" aria-selected="false" data-office-tab="bank">Bank</button>
         </div>
 
         <section class="office-pane active" data-office-pane="upgrades" role="tabpanel">
@@ -96,6 +97,33 @@
             <button class="option-card recipe-choice accent-purple" data-recipe="funghi" type="button">Unlock Funghi</button>
             <button class="option-card recipe-choice accent-mint" data-recipe="zucchini" type="button">Unlock Zucchini</button>
           </div>
+        </section>
+
+        <section class="office-pane" data-office-pane="bank" role="tabpanel">
+          <div class="bank-dashboard">
+            <div class="bank-stat"><span>Credit limit</span><strong id="bankCreditLimit">$200</strong></div>
+            <div class="bank-stat"><span>Available credit</span><strong id="bankAvailableCredit">$200</strong></div>
+            <div class="bank-stat"><span>Outstanding debt</span><strong id="bankOutstandingDebt">$0</strong></div>
+            <div class="bank-stat"><span>Next instalment</span><strong id="bankNextPayment">—</strong></div>
+          </div>
+          <div class="bank-borrow-card">
+            <div class="bank-card-heading">
+              <div><strong>Business credit line</strong><span>Four instalments · one payment every 3 minutes</span></div>
+              <strong id="bankBorrowAmount">$50</strong>
+            </div>
+            <input id="bankBorrowRange" type="range" min="50" max="200" step="50" value="50" aria-label="Loan amount" />
+            <div class="bank-borrow-summary">
+              <span id="bankInterestSummary">Total repayment: $60</span>
+              <button id="bankBorrowBtn" class="bank-primary" type="button">Borrow $50</button>
+            </div>
+          </div>
+          <div id="bankStatus" class="bank-status" aria-live="polite">No active loan.</div>
+          <div id="bankSeizedAssets" class="bank-seized-assets hidden"></div>
+          <div class="bank-actions">
+            <button id="bankPayOverdueBtn" class="confirm-cancel" type="button">Pay overdue instalment</button>
+            <button id="bankRepayAllBtn" class="staff-rehire" type="button">Repay all debt</button>
+          </div>
+          <p class="report-note">First missed payment adds a 10% late fee and grants 3 more minutes. A second consecutive miss triggers a bank lien. Core equipment can never be seized.</p>
         </section>
 
         <div id="staffNotice" class="staff-notice hidden" role="alertdialog" aria-modal="true" aria-labelledby="staffNoticeText">
@@ -164,6 +192,6 @@
         <span>click to start</span>
       </div>
     </div>
-  <script src="main.js?v=chef-motion-scale-v2"></script>
+  <script src="main.js?v=bank-credit-v1"></script>
   </body>
 </html>

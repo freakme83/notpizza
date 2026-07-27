@@ -235,7 +235,7 @@ canvas#game {
 
 .office-tabs {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 8px;
   margin: 8px 0 10px;
   padding: 6px;
@@ -265,6 +265,117 @@ canvas#game {
 
 .office-pane { display: none; }
 .office-pane.active { display: block; animation: officePaneIn 160ms ease-out; }
+
+.bank-dashboard {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.bank-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 11px 12px;
+  border: 1px solid rgba(115, 222, 216, 0.2);
+  border-radius: 12px;
+  background: linear-gradient(145deg, rgba(20, 54, 73, 0.9), rgba(39, 31, 77, 0.9));
+}
+
+.bank-stat span,
+.bank-card-heading span {
+  color: #aeb7dc;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.bank-stat strong { color: #7de7ce; font-size: 1rem; }
+
+.bank-borrow-card {
+  padding: 14px;
+  border: 1px solid rgba(217, 84, 168, 0.28);
+  border-radius: 14px;
+  background: linear-gradient(135deg, rgba(43, 37, 91, 0.96), rgba(18, 68, 76, 0.92));
+}
+
+.bank-card-heading,
+.bank-borrow-summary,
+.bank-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.bank-card-heading > div { display: flex; flex-direction: column; gap: 3px; }
+.bank-card-heading > div > strong,
+.bank-card-heading > strong { color: #fff; }
+.bank-card-heading > strong { font-size: 1.25rem; }
+
+#bankBorrowRange {
+  width: 100%;
+  margin: 14px 0 10px;
+  accent-color: #68e3bd;
+}
+
+.bank-borrow-summary > span {
+  color: #cdd4ef;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.bank-primary {
+  padding: 9px 14px;
+  border: 0;
+  border-radius: 9px;
+  color: #10252b;
+  background: linear-gradient(135deg, #68e3bd, #6ecbe8);
+  font: 900 0.76rem 'Inter', sans-serif;
+  cursor: pointer;
+}
+
+.bank-primary:disabled { opacity: 0.42; cursor: not-allowed; }
+
+.bank-status,
+.bank-seized-assets {
+  margin-top: 9px;
+  padding: 9px 11px;
+  border-radius: 9px;
+  color: #dce3f7;
+  background: rgba(5, 8, 28, 0.34);
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+
+.bank-status.warning {
+  color: #ffe0b2;
+  border: 1px solid rgba(255, 154, 96, 0.35);
+  background: rgba(112, 45, 51, 0.46);
+}
+
+.bank-seized-assets::before {
+  content: 'Seized: ';
+  color: #ff9d9d;
+  font-weight: 900;
+}
+
+.bank-actions {
+  justify-content: flex-end;
+  margin-top: 9px;
+}
+
+.bank-actions button:disabled { opacity: 0.38; cursor: not-allowed; }
+
+@media (max-width: 620px) {
+  .office-tabs { grid-template-columns: repeat(2, 1fr); }
+  .bank-dashboard { grid-template-columns: repeat(2, 1fr); }
+  .bank-borrow-summary,
+  .bank-actions { align-items: stretch; flex-direction: column; }
+}
 
 @keyframes officePaneIn {
   from { opacity: 0; transform: translateY(3px); }
