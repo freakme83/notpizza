@@ -2148,14 +2148,14 @@
   function chefNext(chef) {
     const ov = oven();
     const slots = activeOvenSlots(ov);
-    const ovenFull = slots.every((s, index) => s.pizza || equipmentUnavailable(equipment.ovens[index]));
     const readyHand = chef.hands.findIndex((h) => h && h.t === 'pizza' && pizzaReadyToBake(h.pz));
     if (readyHand >= 0) {
       const freeOven = slots.findIndex((s, index) => !s.pizza && !equipmentUnavailable(equipment.ovens[index]));
       if (freeOven >= 0) { chef.state = 'tooven'; chef.targetSlot = freeOven; chef.handSlot = readyHand; return; }
-      return; // oven full: hold the ready pizza and wait
+      // Keep the finished pizza in hand while the oven is full. The chef may
+      // still finish a second work-in-progress pizza or start another order
+      // with the free hand; oven capacity only gates the placement step.
     }
-    if (ovenFull) return; // both ovens busy: stop until a slot frees
     const wipHand = chef.hands.findIndex((h) => h && h.t === 'pizza' && !pizzaReadyToBake(h.pz));
     if (wipHand >= 0) {
       const nx = nextActionForPizza(chef.hands[wipHand].pz);
